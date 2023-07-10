@@ -114,12 +114,13 @@ class AutoEncoder(nn.Module):
         x, y, z = x[:, :, :, np.newaxis], y[:, :, :, np.newaxis], z[:, :, :, np.newaxis]
         coordinates = np.concatenate((x, y, z), axis=3)
         coordinates = coordinates.reshape((-1, 3))
-        coordinates = torch.from_numpy(coordinates).float().unsqueeze(0).cuda(device)
+        coordinates = torch.from_numpy(coordinates).float().unsqueeze(0).to(device)
         return coordinates
 
 
     def save_bsp_deform(self, inputs: torch.Tensor, file_path: Union[None, str],
-                        resolution: int = 16, max_batch=100000, space_range=(-1, 1), thershold_1=0.01, thershold_2=0.01, save_output=True, embedding=None):
+                        resolution: int = 16, max_batch=100000, space_range=(-1, 1), 
+                        thershold_1=0.01, thershold_2=0.01, save_output=True, embedding=None, return_voxel_and_values=False):
 
         assert (self.config.decoder_type == 'Flow' or self.config.decoder_type == 'MVP') and self.config.flow_use_bsp_field
 
@@ -134,11 +135,30 @@ class AutoEncoder(nn.Module):
             inputs = inputs.unsqueeze(0)
             embedding = self.encoder(inputs)
 
-        vertices, polygons, vertices_deformed, polygons_deformed, vertices_convex, bsp_convex_list = self.generate_deform_bsp(
+        result_deform = self.generate_deform_bsp(
             convex_layer_weights, coordinates, embedding, file_path, max_batch,
-            resolution, thershold_1, thershold_2, save_output=save_output)
+            resolution, thershold_1, thershold_2, save_output=save_output, return_voxel_and_values=return_voxel_and_values)
+        (vertices, polygons, vertices_deformed, polygons_deformed, 
+            vertices_convex, bsp_convex_list) = result_deform[:6]
+        
+        return_params = (
+            vertices, polygons, 
+            vertices_deformed, polygons_deformed, 
+            embedding, 
+            vertices_convex, bsp_convex_list,
+        )
+        
+        if hasattr(self.config, 'sample_class') and self.config.sample_class:
+            return_params = (*return_params, result_deform[6])
 
-        return vertices, polygons, vertices_deformed, polygons_deformed, embedding, vertices_convex, bsp_convex_list
+        if return_voxel_and_values:
+            convex_predictions_sum, point_value_prediction = result_deform[-2:]
+            return_params = (
+                *return_params,
+                convex_predictions_sum, point_value_prediction,
+            )
+            
+        return return_params
 
     def extract_prediction(self, embedding, coordinates, max_batch):
 
@@ -158,17 +178,20 @@ class AutoEncoder(nn.Module):
 
     def generate_deform_bsp(self, convex_layer_weights, coordinates, embedding, file_path, max_batch,
                             resolution, thershold_1, thershold_2,
-                            save_output=True):
+                            save_output=True, return_voxel_and_values=False):
 
-        if hasattr(self.config, 'flow_use_split_dim') and self.config.flow_use_split_dim:
-            embedding_1 = embedding[:, :self.config.decoder_input_embbeding_size]
-            embedding_2 = embedding[:, self.config.decoder_input_embbeding_size:]
+        embedding_1, embedding_2 = self.decoder.extract_embedding(embedding, [0, 1])
+
+        results = self.extract_bsp_convex(
+            convex_layer_weights, coordinates, embedding, 
+            max_batch, resolution, thershold_1, thershold_2
+        )
+
+        if hasattr(self.config, 'sample_class') and self.config.sample_class:
+            bsp_convex_list, convex_predictions_sum, point_value_prediction, predicted_class = results
         else:
-            embedding_1 = embedding
-            embedding_2 = embedding
-
-        bsp_convex_list = self.extract_bsp_convex(convex_layer_weights, coordinates, embedding, max_batch, resolution,
-                                                  thershold_1, thershold_2)
+            predicted_class = None
+            bsp_convex_list, convex_predictions_sum, point_value_prediction = results
 
         vertices, polygons, vertices_convex, polygons_convex = get_mesh_watertight(bsp_convex_list)
 
@@ -180,30 +203,47 @@ class AutoEncoder(nn.Module):
         if save_output:
             write_ply_polygon(file_path[:-4] + '_deformed.ply', vertices_result, polygons)
             write_ply_polygon(file_path[:-4] + '_orginal.ply', vertices, polygons)
+        return_params = (vertices, polygons, vertices_result, polygons, vertices_convex, bsp_convex_list)
 
+        if hasattr(self.config, 'sample_class') and self.config.sample_class and predicted_class is not None:
+            return_params = (*return_params, predicted_class)
 
-        return vertices, polygons, vertices_result, polygons, vertices_convex, bsp_convex_list
+        if return_voxel_and_values:
+            return_params = (
+                *return_params,
+                convex_predictions_sum, point_value_prediction
+            )
+        return return_params
 
     def extract_bsp_convex(self, convex_layer_weights, coordinates, embedding, max_batch, resolution, thershold_1,
                            thershold_2):
 
-        if hasattr(self.config, 'flow_use_split_dim') and self.config.flow_use_split_dim:
-            embedding_1 = embedding[:, :self.config.decoder_input_embbeding_size]
-            embedding_2 = embedding[:, self.config.decoder_input_embbeding_size:]
-        else:
-            embedding_1 = embedding
-            embedding_2 = embedding
+        embedding_2, = self.decoder.extract_embedding(embedding, [1])
 
         ## plane
         plane_parms = self.decoder.bsp_field.plane_encoder(embedding_2).cpu().detach().numpy()
         convex_predictions = []
+        point_value_predictions = []
+        class_prediction = None
+
         c_dim = self.decoder.bsp_field.c_dim
         for i in range(coordinates.size(1) // max_batch + 1):
-            result = self.decoder(embedding, coordinates[:, i * max_batch:(i + 1) * max_batch])
-            result = result[0]
+            results = self.decoder(
+                embedding, coordinates[:, i * max_batch:(i + 1) * max_batch],
+                apply_recognition=i == 0 # Only on first step
+            )
 
-            convex_prediction = result.squeeze(0).detach().cpu().numpy()
-            convex_predictions.append(convex_prediction)
+            if i == 0 and hasattr(self.config, 'sample_class') and self.config.sample_class:
+                h2, h3, exist, convex_layer_weights, predicted_class = results
+                class_prediction = predicted_class.squeeze(0).detach().cpu().numpy()
+            else:
+                h2, h3, exist, convex_layer_weights = results
+
+            convex_prediction = h2.squeeze(0).detach().cpu().numpy()
+            convex_predictions.append(convex_prediction) 
+            
+            point_value_prediction = h3.detach().cpu().numpy()
+            point_value_predictions.append(point_value_prediction)
         if len(convex_predictions) > 1:
             convex_predictions = np.concatenate(tuple(convex_predictions), axis=0)
         else:
@@ -211,6 +251,9 @@ class AutoEncoder(nn.Module):
         convex_predictions = np.abs(convex_predictions.reshape((resolution, resolution, resolution, c_dim)))
         convex_predictions_float = convex_predictions < thershold_1
         convex_predictions_sum = np.sum(convex_predictions_float, axis=3)
+        point_value_prediction = np.concatenate(point_value_predictions, axis=1)
+        # point_value_prediction = point_value_prediction.reshape((resolution, resolution, resolution, 1))
+
         bsp_convex_list = []
         p_dim = self.decoder.bsp_field.p_dim
         cnt = 0
@@ -235,7 +278,9 @@ class AutoEncoder(nn.Module):
                 cnt += 1
             print(f"{i} done! ")
         print(f'with {len(bsp_convex_list)} convex and enter to function {cnt}')
-        return bsp_convex_list
+        if hasattr(self.config, 'sample_class') and self.config.sample_class:
+            return bsp_convex_list, convex_predictions_sum, point_value_prediction, class_prediction
+        return bsp_convex_list, convex_predictions_sum, point_value_prediction
 
     def deform_vertices(self, embedding, max_batch, vertices, terminate_time = None):
         ### deform the vertices

@@ -120,7 +120,7 @@ class ODEfunc(torch.nn.Module):
         t = t.unsqueeze(0).unsqueeze(1).expand((y.size(0), y.size(1), -1))
         concated_context = torch.cat((t , context), dim = 2)
         dy = self.ode_net(concated_context, y)
-
+        # TODO: Is this right think to do?
         return dy, torch.zeros_like(context).requires_grad_(True)
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')

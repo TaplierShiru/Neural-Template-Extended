@@ -20,16 +20,30 @@ class CNN3D(nn.Module):
     def __init__(self, config):
         super(CNN3D, self).__init__()
 
+        # TODO: Remove or refactor below
+        """
         output_dim = config.decoder_input_embbeding_size * 2 if config.decoder_type == 'Flow' and hasattr(config,
                                                                                                           'flow_use_split_dim') \
                                                                 and config.flow_use_split_dim else config.decoder_input_embbeding_size
-
         if hasattr(config, 'use_double_encoder') and config.use_double_encoder:
             output_dim = output_dim // 2
 
-        output_dim = output_dim + config.decoder_input_embbeding_size if hasattr(config,
-                                                                                 'bsp_use_binary_prediciton') and config.bsp_use_binary_prediciton else output_dim
-
+        output_dim = output_dim + config.decoder_input_embbeding_size if hasattr(
+                config, 'bsp_use_binary_prediciton') and config.bsp_use_binary_prediciton else output_dim
+        """
+        # Updated output_dim - just give output without any resctrickts
+        output_dim = config.output_channels
+        if hasattr(config, 'sample_class') and config.sample_class and output_dim / config.decoder_input_embbeding_size != 3:
+            raise Exception(
+                'Error! Sample class is expected but size of output encoder is not divided by 3 (number of modules). '
+                f'output_dim={output_dim}, decoder_input_embbeding_size={config.decoder_input_embbeding_size}.'
+            )
+        elif (not hasattr(config, 'sample_class') or (hasattr(config, 'sample_class') and not config.sample_class)) and output_dim / config.decoder_input_embbeding_size != 2:
+            raise Exception(
+                'Error! Output dim is not divided by 2 (number of modules). '
+                f'output_dim={output_dim}, decoder_input_embbeding_size={config.decoder_input_embbeding_size}.'
+            )
+        
         self.ef_dim = int(output_dim / 8)
         self.conv_1 = nn.Conv3d(1, self.ef_dim, 4, stride=2, padding=1, bias=True)
         self.conv_2 = nn.Conv3d(self.ef_dim, self.ef_dim * 2, 4, stride=2, padding=1, bias=True)

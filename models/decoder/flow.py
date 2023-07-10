@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 from models.decoder.ode_layers.cnf_layer import ODE_Net, ODE_ResNet, ODEfunc
 from models.decoder.bsp import BSPDecoder
+from models.decoder.recognition import RecognitionDecoder
 from torchdiffeq import odeint_adjoint, odeint
 import os
 import numpy as np
@@ -51,23 +52,57 @@ class FlowDecoder(torch.nn.Module):
 
         self.bsp_field = BSPDecoder(config)
 
+        if hasattr(config, 'sample_class') and config.sample_class:
+            if not hasattr(config, 'recognition_num_classes'):
+                raise Exception(
+                    'Number of classes are uknown. '
+                    'Provide parameter `recognition_num_classes` in config file. '
+                )
+
+            self.recognition_decoder = RecognitionDecoder(config=config)
+        else:
+            self.recognition_decoder = None
+
         self.last_activation = config.decoder_last_activation
 
 
-    def forward(self, embedding: torch.Tensor, coordinates: torch.Tensor, adjoint=True):
+    def forward(self, embedding: torch.Tensor, coordinates: torch.Tensor, adjoint=True, apply_recognition=True):
 
-        if hasattr(self.config, 'flow_use_split_dim') and self.config.flow_use_split_dim:
-            embedding_1 = embedding[:, :self.config.decoder_input_embbeding_size]
-            embedding_2 = embedding[:, self.config.decoder_input_embbeding_size:]
-        else:
-            embedding_1 = embedding
-            embedding_2 = embedding
+        embedding_1, embedding_2, embedding_3 = self.extract_embedding(embedding)
 
         final_state = self.forward_flow(embedding_1, coordinates, adjoint=adjoint)
 
         final_state = self.extract_output(coordinates, embedding_2, final_state)
 
+        if apply_recognition:
+            final_state = self.recognition_output(embedding_3, final_state)
         return final_state
+
+    def extract_embedding(self, embedding, which_parts_return=[0, 1, 2]):
+        if hasattr(self.config, 'flow_use_split_dim') and self.config.flow_use_split_dim:
+            if self.recognition_decoder is not None:
+                # Should be divided by 3 equal parts
+                if embedding.shape[1] // self.config.decoder_input_embbeding_size != 3:
+                    raise Exception(
+                        'Embedding dims are not divided by 3 modules, but recognition module is used.'
+                        f'embedding shape {embedding.shape} | expected size per module {self.config.decoder_input_embbeding_size}.')
+                embedding_1 = embedding[:, :self.config.decoder_input_embbeding_size]
+                embedding_2 = embedding[:, self.config.decoder_input_embbeding_size: self.config.decoder_input_embbeding_size*2]
+                embedding_3 = embedding[:, self.config.decoder_input_embbeding_size*2:]
+            else:
+                embedding_1 = embedding[:, :self.config.decoder_input_embbeding_size]
+                embedding_2 = embedding[:, self.config.decoder_input_embbeding_size:]
+                embedding_3 = None
+        else:
+            embedding_1 = embedding
+            embedding_2 = embedding
+            if self.recognition_decoder is not None:
+                embedding_3 = embedding
+            else:
+                embedding_3 = None
+        embeddings_list = [embedding_1, embedding_2, embedding_3]
+        embeddings_list = [emb for i, emb in enumerate(embeddings_list) if i in which_parts_return]
+        return tuple(embeddings_list)
 
     def extract_output(self, coordinates, embedding_2, final_state):
         if hasattr(self.config, "flow_use_bsp_field") and self.config.flow_use_bsp_field:
@@ -75,6 +110,14 @@ class FlowDecoder(torch.nn.Module):
             final_state = (final_state[0], self.last_activation(final_state[1]), final_state[2], final_state[3])
         else:
             raise Exception("Unknown Network....")
+        return final_state
+    
+    def recognition_output(self, embedding, final_state):
+        if self.recognition_decoder is None:
+            return final_state
+        
+        predicted_classes = self.recognition_decoder(embedding)
+        final_state = (*final_state, predicted_classes)
         return final_state
 
     def arbitrary_flow(self, embedding, coordinates: torch.Tensor, start : float, end : float, adjoint=True, device_id=None):

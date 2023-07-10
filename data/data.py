@@ -19,6 +19,7 @@ class ImNetImageSamples(torch.utils.data.Dataset):
                  sample_interval=1,
                  image_idx=None,
                  sample_voxel_size: int = 64,
+                 sample_class: bool = False,
                  ):
         super(ImNetImageSamples, self).__init__()
         data_dict = h5py.File(data_path, 'r')
@@ -27,10 +28,20 @@ class ImNetImageSamples(torch.utils.data.Dataset):
                                                          self.data_voxels.shape[3]])
         self.data_values = data_dict['values_' + str(sample_voxel_size)][:].astype(np.float32)
         self.data_points = (data_dict['points_' + str(sample_voxel_size)][:].astype(np.float32) + 0.5) / 256 - 0.5
+        
+        if sample_class:
+            # TODO: By default they stored as uint8, maybe by default store them as int32?
+            self.data_classes = data_dict['classes'][:].astype(np.int32)
+        else:
+            self.data_classes = None
 
         ### get file
         label_txt_path = data_path[:-5] + '.txt'
-        self.obj_paths = [os.path.basename(line).rstrip('\n') for line in open(label_txt_path, mode='r').readlines()]
+        if os.path.isfile(label_txt_path):
+            self.obj_paths = [line.rstrip('\n') for line in open(label_txt_path, mode='r').readlines()]
+        else:
+            # TODO: It could brake some inference notebooks
+            self.obj_paths = None
 
         ### extract the latent vector
         if auto_encoder is not None:
@@ -75,18 +86,19 @@ class ImNetImageSamples(torch.utils.data.Dataset):
         else:
             latent_vector_gt = None
 
-        processed_inputs = image, latent_vector_gt
+        if self.data_classes is not None:
+            obj_class = self.data_classes[idx]
+            processed_inputs = image, latent_vector_gt, obj_class
+        else:
+            processed_inputs = image, latent_vector_gt
 
         return processed_inputs, idx
 
 
     def extract_latent_vector(self, data_voxels,  auto_encoder, max_batch):
-
-
         num_batch = int(np.ceil(data_voxels.shape[0] / max_batch))
 
         results = []
-        print("start to extract GT!!!")
         with tqdm(range(num_batch), unit='batch') as tlist:
             for i in tlist:
                 batched_voxels = data_voxels[i*max_batch:(i+1)*max_batch].astype(np.float32)
@@ -99,7 +111,6 @@ class ImNetImageSamples(torch.utils.data.Dataset):
             self.latent_vectors = results
         else:
             self.latent_vectors = np.concatenate(tuple(results), axis = 0)
-        print("Done the extraction of GT!!!")
 
 
 
@@ -107,7 +118,8 @@ class ImNetSamples(torch.utils.data.Dataset):
     def __init__(self,
                  data_path: str,
                  sample_voxel_size: int,
-                 interval=1):
+                 interval=1,
+                 sample_class: bool = False,):
         super(ImNetSamples, self).__init__()
         self.sample_voxel_size = sample_voxel_size
         data_dict = h5py.File(data_path, 'r')
@@ -117,9 +129,19 @@ class ImNetSamples(torch.utils.data.Dataset):
         self.data_voxels = np.reshape(self.data_voxels, [-1, 1, self.data_voxels.shape[1], self.data_voxels.shape[2],
                                                          self.data_voxels.shape[3]])
 
+        if sample_class:
+            # TODO: By default they stored as uint8, maybe by default store them as int32?
+            self.data_classes = data_dict['classes'][:].astype(np.int32)
+        else:
+            self.data_classes = None
+
         ### get file
         label_txt_path = data_path[:-5] + '.txt'
-        self.obj_paths = [os.path.basename(line).rstrip('\n') for line in open(label_txt_path, mode='r').readlines()]
+        if os.path.isfile(label_txt_path):
+            self.obj_paths = [line.rstrip('\n') for line in open(label_txt_path, mode='r').readlines()]
+        else:
+            # TODO: It could brake some inference notebooks
+            self.obj_paths = None
 
         ## interval
         self.interval = interval
@@ -132,8 +154,20 @@ class ImNetSamples(torch.utils.data.Dataset):
 
         idx = idx * self.interval
 
-        processed_inputs = self.data_voxels[idx].astype(np.float32), self.data_points[idx].astype(np.float32), \
-                           self.data_values[idx]
+        if self.data_classes is not None:
+            obj_class = self.data_classes[idx]
+            processed_inputs = (
+                self.data_voxels[idx].astype(np.float32), 
+                self.data_points[idx].astype(np.float32),
+                self.data_values[idx],
+                obj_class
+            )
+        else:
+            processed_inputs = (
+                self.data_voxels[idx].astype(np.float32), 
+                self.data_points[idx].astype(np.float32),
+                self.data_values[idx]
+            )
 
 
         return processed_inputs, idx

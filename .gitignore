@@ -1,3 +1,15 @@
+# Allow only default configs to upload
+configs/config_continuous_*.py
+configs/config_discrete_*.py
+
+# Weights / datasets and etc
+*.zip
+pretrain/image_encoder
+pretrain/phase_2_model
+
+# Test / training stuff
+debug/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

@@ -1,7 +1,13 @@
 # Neural-Template
-Neural Template: Topology-aware Reconstruction and Disentangled Generation of 3D Meshes (CVPR 2022)
+[Neural Template: Topology-aware Reconstruction and Disentangled Generation of 3D Meshes (CVPR 2022)](https://openaccess.thecvf.com/content/CVPR2022/html/Hui_Neural_Template_Topology-Aware_Reconstruction_and_Disentangled_Generation_of_3D_Meshes_CVPR_2022_paper.html)
 
 ![gallery](figures/gallery.png)
+
+# Whats new compare to original repository
+- Additional module - **Recognition module**. Mainly for classification task. **Encoder** give latent space vector which should be classified via **Recognition network** (which for now simple several MLPs);
+- In some areas/cases clean code to better understand how this system works;
+- Evaluation code to calculate: Chamfer distance (CD), Normal Consistency (NC), Point-to-surface distance (P2F) and Light field distance (LFD). Currently in development, will be added later.
+- SOON...
 
 # Environments
 You can create and activate a conda environment for this project using the following commands:
@@ -31,10 +37,12 @@ Lastly, for the Image encoder training, you should specify the ```auto_encoder_c
 python train/image_trainer.py --resume_path ./configs/config_image.py
 ```
 
-# Testing
+# Evaluation
 We provide the pre-trained models used in the paper for reproducing the results. You can unzip the file ([link](https://drive.google.com/file/d/1--C2xUp0yao_nHDNvEpL3a1ZpTVC139J/view?usp=sharing)) in the ```pretrain``` folder.
 
-For the evaluation of the autoencoder, you can use this command:
+Next command will produce .ply files from ether voxels or images.
+
+For the evaluation of the autoencoder (input are voxels), you can use this command:
 ```angular2html
 python utils/mesh_visualization.py
 ```
@@ -45,6 +53,10 @@ python utils/image_mesh_visualization.py
 ```
 
 If you need test your own trained model, you change the ```testing_folder``` variable in these two python files.
+
+To get metric, you could run next commands:
+
+***IN DEVELOPMENT!***
 
 ### Note: 
 you need to set ```PYTHONPATH=<project root directory>``` before running any above commands.
