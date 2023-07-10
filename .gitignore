@@ -6,6 +6,7 @@ configs/config_discrete_*.py
 *.zip
 pretrain/image_encoder
 pretrain/phase_2_model
+data/all_vox256_img*
 
 # Test / training stuff
 debug/
