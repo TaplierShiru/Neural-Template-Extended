@@ -161,7 +161,7 @@ def get_mesh_watertight(bsp_convex_list):
 
 
 # Union parametric faces to form a mesh, output vertices and polygons
-def digest_bsp(bsp_convex, bias):
+def digest_bsp(bsp_convex, bias, print_additional_info=False):
     faces = []
 
     cnt = 0
@@ -172,8 +172,8 @@ def digest_bsp(bsp_convex, bias):
             faces = join_polygons(temp_face, faces)
         else:
             cnt += 1
-
-    print(f"Empty plane cnt : {cnt}")
+    if print_additional_info:
+        print(f"Empty plane cnt : {cnt}")
 
     vertices = []
     polygons = []

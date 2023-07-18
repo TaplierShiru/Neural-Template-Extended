@@ -3,17 +3,30 @@ import random
 import torch
 import importlib
 import os
-from models.network import AutoEncoder, ImageAutoEncoder
+import argparse
+
+try:
+    from models.network import AutoEncoder, ImageAutoEncoder
+except ModuleNotFoundError:
+    # Append base path with all needed code
+    import pathlib
+    import sys
+    base_path, _ = os.path.split(pathlib.Path(__file__).parent.resolve())
+    sys.path.append(base_path)
+    # Try again
+    from models.network import AutoEncoder, ImageAutoEncoder
+
 from data.data import ImNetImageSamples
-from utils.debugger import MyDebugger
 from torch.multiprocessing import Pool, Process, set_start_method
 
-from .utils import sample_points_polygon_vox64_njit, write_ply_point_normal
+from eval_utils import sample_points_polygon_vox64_njit
+from utils.other_utils import write_ply_point_normal
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 def extract_one_input(args):
-    args_list, network_path, config_path, device_id = args
+    args_list, network_path, config_path, device_id, sample_normal_points = args
+    print(f'Start generation with number of args {len(args_list)} and device id {device_id}')
 
     torch.cuda.set_device(device_id)
     spec = importlib.util.spec_from_file_location('*', config_path)
@@ -40,37 +53,47 @@ def extract_one_input(args):
     network.load_state_dict(network_state_dict)
     network.eval()
 
-    for args in args_list:
-        image_inputs, store_file_path, resolution, max_batch, space_range, thershold, sample_normal_points, with_surface_point = args
-        image_inputs = torch.from_numpy(image_inputs).float().cuda(device_id)
-
-        ## new embedding
-        embedding = network.image_encoder(image_inputs.unsqueeze(0))
-        if os.path.exists(store_file_path):
+    for i, args in enumerate(args_list):
+        if i % int(len(args_list) * 0.1) == 0:
+            print(f'Device id {device_id} ; done is {round(i/len(args_list)*100, 2)}') 
+        image_inputs, store_file_folder_path, resolution, max_batch, space_range, thershold, with_surface_point = args
+        os.makedirs(store_file_folder_path, exist_ok=True)
+        store_file_path = os.path.join(store_file_folder_path, 'obj.ply')
+        if os.path.exists(store_file_path[:-4] + '_deformed.ply'):
             print(f"{store_file_path} exists!")
             continue
-        else:
-            (vertices, polygons, vertices_deformed, polygons_deformed, 
-                embedding, vertices_convex, bsp_convex_list, 
-                convex_predictions_sum, point_value_prediction) = network.auto_encoder.save_bsp_deform(
-                inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
-                space_range=space_range, thershold_1=thershold, embedding=embedding,
-                return_voxel_and_values=True
-            )
+            
+        image_inputs = torch.from_numpy(image_inputs).float().cuda(device_id)
+        ## new embedding
+        embedding = network.image_encoder(image_inputs.unsqueeze(0))
+        (vertices, polygons, vertices_deformed, polygons_deformed, 
+            embedding, vertices_convex, bsp_convex_list, 
+            convex_predictions_sum, point_value_prediction) = network.auto_encoder.save_bsp_deform(
+            inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
+            space_range=space_range, thershold_1=thershold, embedding=embedding,
+            return_voxel_and_values=True
+        )
 
-            if sample_normal_points:
-                # sample surface points
-                sampled_points_normals = sample_points_polygon_vox64_njit(vertices, polygons, convex_predictions_sum.copy(), 16384)
-                point_coord = np.reshape(sampled_points_normals[:,:3]+sampled_points_normals[:,3:]*1e-4, [1,-1,3])
-                point_coord = torch.from_numpy(point_coord).to(device_id)
-                # point_coord = np.concatenate([point_coord, np.ones([1,point_coord.shape[1],1],np.float32) ],axis=2)
-                
-                _, sample_points_value, _, _ = network.auto_encoder.decoder(embedding, point_coord)
-                sample_points_value = sample_points_value.detach().cpu().numpy()
-                sampled_points_normals = sampled_points_normals[sample_points_value[0,:,0]>1e-4]
-                
-                np.random.shuffle(sampled_points_normals)
-                write_ply_point_normal(store_file_path[:-4] + '_normals.ply', sampled_points_normals[:4096])
+        if sample_normal_points:
+            # Invert convex voxel cube
+            inverted_convex_predictions = np.logical_not(convex_predictions_sum > 1e-4).astype(np.float32)
+            # Sample surface points
+            sampled_points_normals = sample_points_polygon_vox64_njit(
+                vertices_deformed, polygons_deformed, 
+                inverted_convex_predictions, 16384
+            )
+            point_coord = np.reshape(sampled_points_normals[:,:3]+sampled_points_normals[:,3:]*1e-4, [1,-1,3])
+            point_coord = torch.from_numpy(point_coord).to(device_id)
+            # point_coord = np.concatenate([point_coord, np.ones([1,point_coord.shape[1],1],np.float32) ],axis=2)
+
+            _, sample_points_value, _, _ = network.auto_encoder.decoder(embedding, point_coord)
+            sample_points_value = sample_points_value.detach().cpu().numpy()
+            # Take normals only for points which are inside object
+            sampled_points_normals = sampled_points_normals[sample_points_value[0,:,0]>1e-4]
+
+            np.random.shuffle(sampled_points_normals)
+            # TODO: Is constraints with 4096 points needed here?
+            write_ply_point_normal(store_file_path[:-4] + '_normals.ply', sampled_points_normals[:4096])
 
 
 def split(a, n):
@@ -86,14 +109,7 @@ def main(args):
     ## dataload
     ### create dataset
     model_type = f"AutoEncoder-{config.encoder_type}-{config.decoder_type}" if config.network_type == 'AutoEncoder' else f"AutoDecoder-{config.decoder_type}"
-    samples = ImNetImageSamples(data_path=args.data_path)
-
-    ### debugger
-    debugger = MyDebugger(
-        f'Mesh-visualization-Image-{os.path.basename(config.data_folder)}-{model_type}',
-        is_save_print_to_file=False
-    )
-    #debugger.set_direcotry_name(some dir)
+    samples = ImNetImageSamples(data_path=args.data_path, label_txt_path=args.obj_txt_file)
 
     ## loading index
     sample_interval = 1
@@ -102,32 +118,39 @@ def main(args):
     save_deformed = True
     thershold = 0.01
     with_surface_point = True
-    with open(args.obj_txt_file, mode='r') as fr:
-        indx2category_model_id_path_list = list(map(lambda x: x.strip(), fr.readlines()))
 
-    device_count = torch.cuda.device_count()
+    device_count = torch.cuda.device_count() if args.max_number_gpu < 0 else args.max_number_gpu
     device_ratio = 1
     worker_nums = int(device_count * device_ratio)
+
+    print(f'Start generation with device_count={device_count} and worker_nums={worker_nums}')
+    if args.sample_normal_points:
+        print('Also generate normal points for each final obj')
 
     generate_args = [
         (
             samples[i][0][0], 
-            os.path.join(args.save_folder, samples.obj_paths[i], 'obj.ply'), 
-            resolution, max_batch, (-0.5, 0.5), thershold,
-            args.sample_normal_points, with_surface_point
+            os.path.join(args.save_folder, samples.obj_paths[i]), 
+            resolution, max_batch, (-0.5, 0.5), 
+            thershold, with_surface_point
         ) 
         for i in range(len(samples)) if i % sample_interval == 0]
     random.shuffle(generate_args)
+    print(f'Number of arguments equal to {len(generate_args)}')
 
     splited_args = split(generate_args, worker_nums)
     final_args = [
-        (splited_args[i], args.network_path, config_path, i % device_count) 
+        (splited_args[i], args.network_path, args.config_path, i % device_count, args.sample_normal_points) 
         for i in range(worker_nums)
     ]
     set_start_method('spawn')
 
     # for arg in args:
     #     extract_one_input(arg)
+
+    if args.test:
+        extract_one_input(final_args[0][0])
+        return
 
     if device_count > 1:
         pool = Pool(device_count)
@@ -150,5 +173,9 @@ if __name__ == '__main__':
                         help='Path to save prepared data.', default='./')
     parser.add_argument('--sample-normal-points', action='store_true',
                         help='If provided when normal points will be generated for ply. ')
+    parser.add_argument('--max-number-gpu', type=int, default=-1,
+                        help='Max number of GPUs to use. By default equal to -1, i.e. will be used all GPUs.')
+    parser.add_argument('--test', action='store_true',
+                        help='If equal to True, when test launch will be started.')
     args = parser.parse_args()
     main(args)

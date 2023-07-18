@@ -1,15 +1,26 @@
+import os
+import argparse
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 
-from models.network import AutoEncoder
+try:
+    from models.network import AutoEncoder
+except ModuleNotFoundError:
+    # Append base path with all needed code
+    import pathlib
+    import sys
+    base_path, _ = os.path.split(pathlib.Path(__file__).parent.resolve())
+    sys.path.append(base_path)
+    # Try again
+    from models.network import AutoEncoder
+
 from data.data import ImNetSamples
 from torch.utils.data import DataLoader
 from utils.debugger import MyDebugger
-import os
-import argparse
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 # torch.backends.cudnn.benchmark = True

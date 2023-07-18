@@ -1,5 +1,6 @@
 import math
 import numba as nb
+import numpy as np
 
 
 #designed to take 64^3 voxels!
@@ -183,54 +184,3 @@ def sample_points_polygon_vox64_njit(vertices, polygons, voxel_model_64, num_of_
                     if count>=num_of_points: break
 
     return point_normal_list
-
-
-def write_ply_point_normal(name, vertices, normals=None):
-    fout = open(name, 'w')
-    fout.write("ply\n")
-    fout.write("format ascii 1.0\n")
-    fout.write("element vertex "+str(len(vertices))+"\n")
-    fout.write("property float x\n")
-    fout.write("property float y\n")
-    fout.write("property float z\n")
-    fout.write("property float nx\n")
-    fout.write("property float ny\n")
-    fout.write("property float nz\n")
-    fout.write("end_header\n")
-    if normals is None:
-        for ii in range(len(vertices)):
-            fout.write(str(vertices[ii,0])+" "+str(vertices[ii,1])+" "+str(vertices[ii,2])+" "+str(vertices[ii,3])+" "+str(vertices[ii,4])+" "+str(vertices[ii,5])+"\n")
-    else:
-        for ii in range(len(vertices)):
-            fout.write(str(vertices[ii,0])+" "+str(vertices[ii,1])+" "+str(vertices[ii,2])+" "+str(normals[ii,0])+" "+str(normals[ii,1])+" "+str(normals[ii,2])+"\n")
-    fout.close()
-
-
-def read_ply_point_normal(shape_name):
-    file = open(shape_name,'r')
-    lines = file.readlines()
-
-    start = 0
-    while True:
-        line = lines[start].strip()
-        if line == "end_header":
-            start += 1
-            break
-        line = line.split()
-        if line[0] == "element":
-            if line[1] == "vertex":
-                vertex_num = int(line[2])
-        start += 1
-
-    vertices = np.zeros([vertex_num,3], np.float32)
-    normals = np.zeros([vertex_num,3], np.float32)
-    for i in range(vertex_num):
-        line = lines[i+start].split()
-        vertices[i,0] = float(line[0]) #X
-        vertices[i,1] = float(line[1]) #Y
-        vertices[i,2] = float(line[2]) #Z
-        normals[i,0] = float(line[3]) #normalX
-        normals[i,1] = float(line[4]) #normalY
-        normals[i,2] = float(line[5]) #normalZ
-    return vertices, normals
-

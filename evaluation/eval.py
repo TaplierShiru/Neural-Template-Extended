@@ -1,134 +1,175 @@
+import traceback
 import numpy as np
 import random
-import torch
+import argparse
 import importlib
 import os
-from models.network import AutoEncoder, ImageAutoEncoder
-from data.data import ImNetImageSamples
-from utils.debugger import MyDebugger
-from torch.multiprocessing import Pool, Process, set_start_method
+
+from tqdm import tqdm
+from multiprocessing import Pool
+
+try:
+    from data.data import ImNetImageSamples
+except ModuleNotFoundError:
+    # Append base path with all needed code
+    import pathlib
+    import sys
+    base_path, _ = os.path.split(pathlib.Path(__file__).parent.resolve())
+    sys.path.append(base_path)
+    # Try again
+    from data.data import ImNetImageSamples
+
+from utils.ply_utils import read_ply_point_normal, read_ply_point
 
 
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+def calculate_cd(gt_points, pd_points):
+    gt_num_points = gt_points.shape[0]
+    pd_num_points = pd_points.shape[0]
 
-def extract_one_input(args):
-    args_list, network_path, config_path, device_id = args
+    gt_points_tiled = np.tile(gt_points.reshape(gt_num_points, 1, 3), [1, pd_num_points, 1])
+    pd_points_tiled = np.tile(pd_points.reshape(1, pd_num_points, 3), [gt_num_points, 1, 1])
 
-    torch.cuda.set_device(device_id)
-    spec = importlib.util.spec_from_file_location('*', config_path)
-    config = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config)
+    dist = ((gt_points_tiled - pd_points_tiled) ** 2).sum(axis=2)
+    match_pd_gt = np.argmin(dist, axis=0)
+    match_gt_pd = np.argmin(dist, axis=1)
 
-    network = ImageAutoEncoder(config=config).cuda(device_id)
+    dist_pd_gt = ((pd_points - gt_points[match_pd_gt]) ** 2).mean() * 3
+    dist_gt_pd = ((gt_points - pd_points[match_gt_pd]) ** 2).mean() * 3
+    chamfer_distance = dist_pd_gt + dist_gt_pd
+
+    return chamfer_distance
 
 
-    ### set autoencoder
-    assert hasattr(config, 'auto_encoder_config_path') and os.path.exists(config.auto_encoder_config_path)
-    auto_spec = importlib.util.spec_from_file_location('*', config.auto_encoder_config_path)
-    auto_config = importlib.util.module_from_spec(auto_spec)
-    auto_spec.loader.exec_module(auto_config)
+def calculate_normal_consistency(gt_points, pd_points, gt_normals, pd_normals):
+    gt_num_points = gt_points.shape[0]
+    pd_num_points = pd_points.shape[0]
 
-    auto_encoder = AutoEncoder(config=auto_config).cuda(device_id)
-    network.set_autoencoder(auto_encoder)
+    gt_points_tiled = np.tile(gt_points.reshape(gt_num_points, 1, 3), [1, pd_num_points, 1])
+    pd_points_tiled = np.tile(pd_points.reshape(1, pd_num_points, 3), [gt_num_points, 1, 1])
 
-    network_state_dict = torch.load(network_path)
-    for key, item in list(network_state_dict.items()):
-        if key[:7] == 'module.':
-            network_state_dict[key[7:]] = item
-            del network_state_dict[key]
-    network.load_state_dict(network_state_dict)
-    network.eval()
+    dist = ((gt_points_tiled - pd_points_tiled) ** 2).sum(axis=2)
+    match_pd_gt = np.argmin(dist, axis=0)
+    match_gt_pd = np.argmin(dist, axis=1)
 
-    for args in args_list:
-        image_inputs, store_file_path, resolution, max_batch, space_range, thershold, with_surface_point = args
-        image_inputs = torch.from_numpy(image_inputs).float().cuda(device_id)
+    # Handle normals that point into wrong direction gracefully
+    # (mostly due to mehtod not caring about this in generation)
+    normals_dot_pd_gt = (np.abs((pd_normals * gt_normals[match_pd_gt]).sum(axis=1))).mean()
+    normals_dot_gt_pd = (np.abs((gt_normals * pd_normals[match_gt_pd]).sum(axis=1))).mean()
+    normal_consistency = (normals_dot_pd_gt + normals_dot_gt_pd) / 2
 
-        ## new embedding
-        embedding = network.image_encoder(image_inputs.unsqueeze(0))
-        if os.path.exists(store_file_path):
-            print(f"{store_file_path} exists!")
-            continue
-        else:
-            network.auto_encoder.save_bsp_deform(
-                inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
-                space_range=space_range, thershold_1=thershold, embedding=embedding
+    return normal_consistency
+
+
+# Used for Pool.map
+def calculate_cd_and_nt(args):
+    vertices_gt, pd_ply, _, pd_normals_ply, gt_normal_ply, obj_path = args
+    class_name = obj_path.split('/')[0]
+    try:
+        if gt_normal_ply is not None and pd_normals_ply is not None:
+            vertices_normal_pd, normals_pd = read_ply_point_normal(pd_normals_ply)
+            vertices_normal_gt, normals_gt = read_ply_point_normal(gt_normal_ply)
+
+            normal_cons_calc = calculate_normal_consistency(
+                vertices_normal_gt, vertices_normal_pd, 
+                normals_gt, normals_pd
             )
+        else:
+            pass # Need func to read ply files (predicted) ...
+        vertices_pd = read_ply_point(pd_ply)
+        cd_calc = calculate_cd(vertices_gt, vertices_pd)
+
+        return class_name, cd_calc, normal_cons_calc
+    except:
+        traceback.print_exc()
+        print(f'Exception triggeret at object {obj_path}. Skip it')
 
 
-def split(a, n):
-    k, m = divmod(len(a), n)
-    return [a[i * k + min(i, m):(i + 1) * k + min(i + 1, m)] for i in range(n)]
 
 def main(args):
-    ## import config here
-    spec = importlib.util.spec_from_file_location('*', args.config_path)
-    config = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(config)
+    # dataload
+    # create dataset
+    samples = ImNetImageSamples(data_path=args.data_path, label_txt_path=args.obj_txt_file)
 
-    ## dataload
-    ### create dataset
-    model_type = f"AutoEncoder-{config.encoder_type}-{config.decoder_type}" if config.network_type == 'AutoEncoder' else f"AutoDecoder-{config.decoder_type}"
-    samples = ImNetImageSamples(data_path=args.data_path)
+    # Setup parameters 
+    cd_res_per_class_dict = dict([
+        (name, []) 
+        for name in list(set(map(lambda x: x.split('/')[0], samples.obj_paths)))
+    ])
 
-    ### debugger
-    debugger = MyDebugger(
-        f'Mesh-visualization-Image-{os.path.basename(config.data_folder)}-{model_type}',
-        is_save_print_to_file=False
-    )
-    #debugger.set_direcotry_name(some dir)
+    normal_cons_res_per_class_dict = dict([
+        (name, []) 
+        for name in list(set(map(lambda x: x.split('/')[0], samples.obj_paths)))
+    ])
 
-    ## loading index
-    sample_interval = 1
-    resolution = 64
-    max_batch = 20000
-    save_deformed = True
-    thershold = 0.01
-    with_surface_point = True
-    with open(args.obj_txt_file, mode='r') as fr:
-        indx2category_model_id_path_list = list(map(lambda x: x.strip(), fr.readlines()))
-
-    device_count = torch.cuda.device_count()
-    device_ratio = 1
-    worker_nums = int(device_count * device_ratio)
-
-    generate_args = [
+    eval_args = [
         (
-            samples[i][0][0], 
-            os.path.join(args.save_folder, samples.obj_paths[i], 'obj.ply'), 
-            resolution, max_batch, (-0.5, 0.5), thershold,
-            with_surface_point
+            samples.data_points[i][np.squeeze(samples.data_values[i] > 1e-4)], 
+            os.path.join(args.predicted_folder, samples.obj_paths[i], 'obj_deformed.ply'), 
+            os.path.join(args.predicted_folder, samples.obj_paths[i], 'obj_orginal.ply'), 
+            os.path.join(args.predicted_folder, samples.obj_paths[i], 'obj_normals.ply')
+                if args.normals_gt_folder is not None else None, 
+            os.path.join(args.normals_gt_folder, f'{samples.obj_paths[i]}.ply') 
+                if args.normals_gt_folder is not None else None,
+            samples.obj_paths[i]
         ) 
-        for i in range(len(samples)) if i % sample_interval == 0]
-    random.shuffle(generate_args)
-
-    splited_args = split(generate_args, worker_nums)
-    final_args = [
-        (splited_args[i], args.network_path, config_path, i % device_count) 
-        for i in range(worker_nums)
+        for i in range(len(samples))
     ]
-    set_start_method('spawn')
 
-    # for arg in args:
-    #     extract_one_input(arg)
+    with Pool(args.num_workers) as p:
+        metric_res = list(tqdm(p.imap(calculate_cd_and_nt, eval_args), total=len(eval_args)))
 
-    if device_count > 1:
-        pool = Pool(device_count)
-        pool.map(extract_one_input, final_args)
-    else:
-        extract_one_input(final_args[0])
+    for class_name, cd_calc, normal_cons_calc in filter(lambda x: x is not None, metric_res):
+        if cd_res_per_class_dict.get(class_name) is None:
+            pass
+        else:
+            cd_res_per_class_dict[class_name].append(cd_calc)
+
+        if normal_cons_res_per_class_dict.get(class_name) is None:
+            pass
+        else:
+            normal_cons_res_per_class_dict[class_name].append(normal_cons_calc)
+    
+    # Calculate for each class (category) and mean
+    cd_res_mean_per_class_dict = dict([
+        (k, sum(v) / len(v))
+        for k,v in cd_res_per_class_dict.items()
+    ])
+    cd_res_mean = sum(cd_res_mean_per_class_dict.values()) / len(cd_res_mean_per_class_dict)
+
+    if args.normals_gt_folder is not None:
+        normal_cons_res_mean_per_class_dict = dict([
+            (k, sum(v) / len(v))
+            for k,v in normal_cons_res_per_class_dict.items()
+        ])
+        normal_cons_mean = sum(normal_cons_res_mean_per_class_dict.values()) / len(normal_cons_res_mean_per_class_dict)
+
+    with open(args.save_txt, 'w') as fp:
+        fp.write('Result per class\n')
+
+        for k, v in cd_res_mean_per_class_dict.items():
+            metric_str = f'class={k} cd={v} '
+
+            if args.normals_gt_folder is not None:
+                metric_str += f' nc={normal_cons_res_mean_per_class_dict[k]}\n'
+            
+            fp.write(metric_str)
+        
+        fp.write(f'Mean cd={cd_res_mean} nc={normal_cons_mean}\n')
 
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('--config-path', type=str,
-                        help='Path to the config python file. Example: `/your/path/to/config.py`.')
+    parser.add_argument('--predicted-folder', type=str,
+                        help='Path to the folder with predicted ply objects.')
     parser.add_argument('--data-path', type=str,
                         help='Path to h5 file which will be used for generation. Example: `/your/path/to/data.hdf5`.')
     parser.add_argument('--obj-txt-file', type=str,
                         help='Path to txt file with obj names to corresponding index in data path file. Example: `/your/path/to/obj_data.txt`.')
-    parser.add_argument('--network-path', type=str,
-                        help='Path to the pth file of trained model. ')
-    parser.add_argument('-s', '--save-folder', type=str,
-                        help='Path to save prepared data.', default='./')
+    parser.add_argument('--normals-gt-folder', type=str, default=None,
+                        help='Path to the folder with ply files with normals.')
+    parser.add_argument('--num-workers', type=int, default=4,
+                        help='Number of process to calculate metric.')
+    parser.add_argument('-s', '--save-txt', type=str, default='./metrics.txt', 
+                        help='Path to save calcualted metrics.')
     args = parser.parse_args()
     main(args)

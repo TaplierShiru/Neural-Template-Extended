@@ -216,7 +216,7 @@ class AutoEncoder(nn.Module):
         return return_params
 
     def extract_bsp_convex(self, convex_layer_weights, coordinates, embedding, max_batch, resolution, thershold_1,
-                           thershold_2):
+                           thershold_2, print_additional_info=False):
 
         embedding_2, = self.decoder.extract_embedding(embedding, [1])
 
@@ -230,7 +230,8 @@ class AutoEncoder(nn.Module):
         for i in range(coordinates.size(1) // max_batch + 1):
             results = self.decoder(
                 embedding, coordinates[:, i * max_batch:(i + 1) * max_batch],
-                apply_recognition=i == 0 # Only on first step
+                # Only on first step
+                apply_recognition=i == 0 and hasattr(self.config, 'sample_class') and self.config.sample_class
             )
 
             if i == 0 and hasattr(self.config, 'sample_class') and self.config.sample_class:
@@ -276,8 +277,10 @@ class AutoEncoder(nn.Module):
                         bsp_convex_list.append(np.array(box, np.float32))
 
                 cnt += 1
-            print(f"{i} done! ")
-        print(f'with {len(bsp_convex_list)} convex and enter to function {cnt}')
+            if print_additional_info:
+                print(f"{i} done! ")
+        if print_additional_info:
+            print(f'with {len(bsp_convex_list)} convex and enter to function {cnt}')
         if hasattr(self.config, 'sample_class') and self.config.sample_class:
             return bsp_convex_list, convex_predictions_sum, point_value_prediction, class_prediction
         return bsp_convex_list, convex_predictions_sum, point_value_prediction
