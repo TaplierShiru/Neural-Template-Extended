@@ -62,20 +62,21 @@ def calculate_normal_consistency(gt_points, pd_points, gt_normals, pd_normals):
 
 # Used for Pool.map
 def calculate_cd_and_nt(args):
-    vertices_gt, pd_ply, _, pd_normals_ply, gt_normal_ply, obj_path = args
+    vertices_gt, pd_ply, pd_normals_ply, gt_normal_ply, obj_path = args
     class_name = obj_path.split('/')[0]
     try:
         if gt_normal_ply is not None and pd_normals_ply is not None:
-            vertices_normal_pd, normals_pd = read_ply_point_normal(pd_normals_ply)
-            vertices_normal_gt, normals_gt = read_ply_point_normal(gt_normal_ply)
+            vertices_pd, normals_pd = read_ply_point_normal(pd_normals_ply)
+            vertices_gt, normals_gt = read_ply_point_normal(gt_normal_ply)
 
             normal_cons_calc = calculate_normal_consistency(
-                vertices_normal_gt, vertices_normal_pd, 
+                vertices_gt, vertices_pd, 
                 normals_gt, normals_pd
             )
         else:
-            pass # Need func to read ply files (predicted) ...
-        vertices_pd = read_ply_point(pd_ply)
+            vertices_pd = read_ply_point(pd_ply)
+            normal_cons_calc = None
+
         cd_calc = calculate_cd(vertices_gt, vertices_pd)
 
         return class_name, cd_calc, normal_cons_calc
@@ -99,14 +100,13 @@ def main(args):
     normal_cons_res_per_class_dict = dict([
         (name, []) 
         for name in list(set(map(lambda x: x.split('/')[0], samples.obj_paths)))
-    ])
+    ]) if args.normals_gt_folder is not None else None
 
     eval_args = [
         (
             samples.data_points[i][np.squeeze(samples.data_values[i] > 1e-4)], 
             os.path.join(args.predicted_folder, samples.obj_paths[i], 'obj_deformed.ply'), 
-            os.path.join(args.predicted_folder, samples.obj_paths[i], 'obj_orginal.ply'), 
-            os.path.join(args.predicted_folder, samples.obj_paths[i], 'obj_normals.ply')
+            os.path.join(args.predicted_folder, samples.obj_paths[i], 'obj_edge_pd_normals.ply' if args.edge else 'obj_normals.ply')
                 if args.normals_gt_folder is not None else None, 
             os.path.join(args.normals_gt_folder, f'{samples.obj_paths[i]}.ply') 
                 if args.normals_gt_folder is not None else None,
@@ -119,14 +119,10 @@ def main(args):
         metric_res = list(tqdm(p.imap(calculate_cd_and_nt, eval_args), total=len(eval_args)))
 
     for class_name, cd_calc, normal_cons_calc in filter(lambda x: x is not None, metric_res):
-        if cd_res_per_class_dict.get(class_name) is None:
-            pass
-        else:
+        if cd_res_per_class_dict.get(class_name) is not None:
             cd_res_per_class_dict[class_name].append(cd_calc)
 
-        if normal_cons_res_per_class_dict.get(class_name) is None:
-            pass
-        else:
+        if normal_cons_res_per_class_dict is not None and normal_cons_res_per_class_dict.get(class_name) is not None:
             normal_cons_res_per_class_dict[class_name].append(normal_cons_calc)
     
     # Calculate for each class (category) and mean
@@ -151,10 +147,19 @@ def main(args):
 
             if args.normals_gt_folder is not None:
                 metric_str += f' nc={normal_cons_res_mean_per_class_dict[k]}\n'
+            else:
+                metric_str += '\n'
             
             fp.write(metric_str)
-        
-        fp.write(f'Mean cd={cd_res_mean} nc={normal_cons_mean}\n')
+
+        metric_str = f'Mean cd={cd_res_mean} '
+
+        if args.normals_gt_folder is not None:
+            metric_str += f' nc={normal_cons_mean}\n'
+        else:
+            metric_str += '\n'
+
+        fp.write(metric_str)
 
 
 if __name__ == '__main__':
@@ -171,5 +176,7 @@ if __name__ == '__main__':
                         help='Number of process to calculate metric.')
     parser.add_argument('-s', '--save-txt', type=str, default='./metrics.txt', 
                         help='Path to save calcualted metrics.')
+    parser.add_argument('--edge', action='store_true', 
+                        help='If calculated metrics are on edge sampled points.')
     args = parser.parse_args()
     main(args)

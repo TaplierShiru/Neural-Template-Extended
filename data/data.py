@@ -121,7 +121,8 @@ class ImNetSamples(torch.utils.data.Dataset):
                  data_path: str,
                  sample_voxel_size: int,
                  interval=1,
-                 sample_class: bool = False,):
+                 sample_class: bool = False,
+                 label_txt_path: str = None):
         super(ImNetSamples, self).__init__()
         self.sample_voxel_size = sample_voxel_size
         data_dict = h5py.File(data_path, 'r')
@@ -138,7 +139,9 @@ class ImNetSamples(torch.utils.data.Dataset):
             self.data_classes = None
 
         ### get file
-        label_txt_path = data_path[:-5] + '.txt'
+        if label_txt_path is None:
+            label_txt_path = data_path[:-5] + '.txt'
+            
         if os.path.isfile(label_txt_path):
             self.obj_paths = [line.rstrip('\n') for line in open(label_txt_path, mode='r').readlines()]
         else:

@@ -91,7 +91,6 @@ class AutoEncoder(nn.Module):
                 self.encoder = CNN3DDouble(config=config)
             else:
                 self.encoder = CNN3D(config=config)
-
         elif config.encoder_type == 'Image':
             self.encoder = ImageEncoder(config=config)
         else:

@@ -1,16 +1,25 @@
 import math
+# TODO: Make approuch without numba
 import numba as nb
 import numpy as np
 
 
-#designed to take 64^3 voxels!
-def sample_points_polygon_vox64(vertices, polygons, voxel_model_64, num_of_points):
-    #convert polygons to triangles
+def polygons_to_triangles(polygons):
     triangles = []
     for ii in range(len(polygons)):
         for jj in range(len(polygons[ii])-2):
             triangles.append( [polygons[ii][0], polygons[ii][jj+1], polygons[ii][jj+2]] )
     triangles = np.array(triangles, np.int32)
+    return triangles
+
+
+#designed to take 64^3 voxels!
+def sample_points_polygon_vox64(vertices, polygons, voxel_model_64, num_of_points, polygons_to_triangles=True):
+    if polygons_to_triangles:
+        # Convert polygons to triangles
+        triangles = polygons_to_triangles(polygons)
+    else:
+        triangles = np.array(polygons, np.int32)
     vertices = np.array(vertices, np.float32)
 
     small_step = 1.0/64
@@ -95,14 +104,10 @@ def sample_points_polygon_vox64(vertices, polygons, voxel_model_64, num_of_point
 
 #designed to take 64^3 voxels!
 @nb.njit()
-def sample_points_polygon_vox64_njit(vertices, polygons, voxel_model_64, num_of_points):
-    #convert polygons to triangles
-    triangles = np.zeros((len(polygons), len(polygons[0])), dtype=np.int32)
-    for ii in range(len(polygons)):
-        for jj in range(len(polygons[ii])-2):
-            triangles[ii][jj] = polygons[ii][0]
-            triangles[ii][jj+1] = polygons[ii][jj+1]
-            triangles[ii][jj+2] = polygons[ii][jj+2]
+def sample_points_polygon_vox64_njit(
+        vertices: np.ndarray, triangles: np.ndarray, voxel_model_64: np.ndarray, 
+        num_of_points: int):
+    triangles = triangles.copy()
     vertices = vertices.copy()
 
     small_step = 1.0/64
