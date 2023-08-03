@@ -4,8 +4,8 @@ configs/config_discrete_*.py
 
 # Weights / datasets and etc
 *.zip
-pretrain/image_encoder
-pretrain/phase_2_model
+pretrain/image_encoder*
+pretrain/phase_2_model*
 data/all_vox256_img*
 
 # Test / training stuff

@@ -88,9 +88,15 @@ def extract_one_input(args):
             else:
                 raise Exception(f'Unknown input type {input_type}. ')
 
-            (vertices, polygons, vertices_deformed, polygons_deformed, 
-                embedding, vertices_convex, bsp_convex_list, 
-                convex_predictions_sum, point_value_prediction) = result
+            if hasattr(config, 'sample_class') and config.sample_class:
+                (vertices, polygons, vertices_deformed, polygons_deformed, 
+                    embedding, vertices_convex, bsp_convex_list, 
+                    predicted_class, convex_predictions_sum, point_value_prediction) = result
+                np.save(os.path.join(store_file_folder_path, 'predicted_class_logits.npy'), predicted_class)
+            else:
+                (vertices, polygons, vertices_deformed, polygons_deformed, 
+                    embedding, vertices_convex, bsp_convex_list, 
+                    convex_predictions_sum, point_value_prediction) = result
 
             if sample_normal_points:
                 # Invert convex voxel cube
@@ -98,11 +104,10 @@ def extract_one_input(args):
                 # Sample surface points
                 sampled_points_normals = sample_points_polygon_vox64_njit(
                     vertices_deformed, polygons_deformed, 
-                    inverted_convex_predictions, 16384,
+                    inverted_convex_predictions, 16384, # 4096 * 4
                 )
                 point_coord = np.reshape(sampled_points_normals[:,:3]+sampled_points_normals[:,3:]*1e-4, [1,-1,3])
                 point_coord = torch.from_numpy(point_coord).to(device_id)
-                # point_coord = np.concatenate([point_coord, np.ones([1,point_coord.shape[1],1],np.float32) ],axis=2)
 
                 if input_type == 'image':
                     _, sample_points_value, _, _ = network.auto_encoder.decoder(embedding, point_coord)
@@ -149,8 +154,7 @@ def main(args):
     with_surface_point = True
 
     device_count = torch.cuda.device_count() if args.max_number_gpu < 0 else args.max_number_gpu
-    device_ratio = 1
-    worker_nums = int(device_count * device_ratio)
+    worker_nums = int(device_count * args.device_ratio)
 
     print(f'Start generation with device_count={device_count} and worker_nums={worker_nums}')
     if args.sample_normal_points:
@@ -182,8 +186,8 @@ def main(args):
         extract_one_input(final_args[0][0])
         return
 
-    if device_count > 1:
-        pool = Pool(device_count)
+    if worker_nums > 1:
+        pool = Pool(worker_nums)
         pool.map(extract_one_input, final_args)
     else:
         extract_one_input(final_args[0])
@@ -207,6 +211,8 @@ if __name__ == '__main__':
                         help='If provided when normal points will be generated for ply. ')
     parser.add_argument('--max-number-gpu', type=int, default=-1,
                         help='Max number of GPUs to use. By default equal to -1, i.e. will be used all GPUs.')
+    parser.add_argument('--device-ratio', type=int, default=1,
+                        help='Number of processes per single gpu. By default equal to 1.')
     parser.add_argument('--test', action='store_true',
                         help='If equal to True, when test launch will be started.')
     args = parser.parse_args()
