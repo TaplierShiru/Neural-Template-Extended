@@ -54,13 +54,52 @@ python utils/image_mesh_visualization.py
 
 If you need test your own trained model, you change the ```testing_folder``` variable in these two python files.
 
-To get metric, you could run next commands:
+To get ***metrics***, you could run next commands:
 
-***IN DEVELOPMENT!***
+**Firstly**, we need to generate ply objects for the test set:
+```bash
+python3 evaluation/generate_mesh_ply.py \
+    --config-path ./pretrain/phase_2_model/config.py \ 
+    --network-path ./pretrain/phase_2_model/model_epoch_2_300.pth \
+    --data-path ./data/all_vox256_img/all_vox256_img_test.hdf5 \
+    --obj-txt-file ./data/all_vox256_img/all_vox256_img_test.txt \
+    -s ./debug/generated_ae_ply_test \
+    --input-type voxels --max-number-gpu 2 --device-ratio 2
+```
 
-### Metrics table
+Notice that loaded model is for voxels as input data, and generated ply objects will be from voxels as input.
+If you need to generate ply objects from input data as images, command will be:
+```bash
+python3 evaluation/generate_mesh_ply.py \
+    --config-path ./pretrain/image_encoder/config.py \ 
+    --network-path ./pretrain/image_encoder/model_epoch_1000.pth \
+    --data-path ./data/all_vox256_img/all_vox256_img_test.hdf5 \
+    --obj-txt-file ./data/all_vox256_img/all_vox256_img_test.txt \
+    -s ./debug/generated_svr_ply_test \
+    --input-type image --max-number-gpu 2 --device-ratio 2
+```
 
-Chamfer distance (scaled by 1000). Reconstruction from voxels data.
+**Secondly**, on generated ply objects calculate metrics. 
+
+To calculate Chamfer distance (CD):
+```bash
+python3 evaluation/eval.py \
+    --predicted-folder ./debug/generated_svr_ply_test \
+    --data-path ./data/all_vox256_img/all_vox256_img_test.hdf5 \
+    --obj-txt-file ./data/all_vox256_img/all_vox256_img_test.txt \
+    --num-workers 6 \
+    -s ./debug/metrics_cd_ae.txt
+```
+
+This command will generate `metrics_cd_ae.txt` file with metrics for each class in ShapeNet dataset.
+
+If saved model trained to classify objects, when on first stage (generation of ply stage) class id will be saved automaticly in each folder. On second stage for CD add `--sample-class`. Final `metrics_cd_ae.txt` will have additional data about classification results.
+
+To calculate Light Field Distance (LFD), you need to setup special programm and get data from it. But there is solution via Docker and create special Python package to simplify the calculation. Refer to this [README](./evaluation/lfd/README.md).
+
+### Metrics table for pretrained models
+
+#### Chamfer distance (scaled by 1000). Reconstruction from voxels data.
 <table>
     <tr style="text-align:center">
         <th></th>
@@ -116,7 +155,7 @@ Chamfer distance (scaled by 1000). Reconstruction from voxels data.
 </table>
 
 
-Chamfer distance (scaled by 1000). Reconstruction from single image.
+#### Chamfer distance (scaled by 1000). Reconstruction from single image.
 <table>
     <tr style="text-align:center">
         <th></th>
@@ -172,7 +211,7 @@ Chamfer distance (scaled by 1000). Reconstruction from single image.
 </table>
 
 
-Normal consistency. Reconstruction from voxels data.
+#### Normal consistency. Reconstruction from voxels data.
 <table>
     <tr style="text-align:center">
         <th></th>
@@ -228,7 +267,7 @@ Normal consistency. Reconstruction from voxels data.
 </table>
 
 
-Normal consistency. Reconstruction from single image.
+#### Normal consistency. Reconstruction from single image.
 <table>
     <tr style="text-align:center">
         <th></th>
@@ -284,7 +323,7 @@ Normal consistency. Reconstruction from single image.
 </table>
 
 
-Light Field Descriptors (LFD). Reconstruction from voxels data.
+#### Light Field Descriptors (LFD). Reconstruction from voxels data.
 <table>
     <tr style="text-align:center">
         <th></th>
@@ -340,7 +379,7 @@ Light Field Descriptors (LFD). Reconstruction from voxels data.
 </table>
 
 
-Light Field Descriptors (LFD). Reconstruction from single image.
+#### Light Field Descriptors (LFD). Reconstruction from single image.
 <table>
     <tr style="text-align:center">
         <th></th>
