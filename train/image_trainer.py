@@ -145,7 +145,10 @@ class ImageTrainer(object):
             input_images, latent_vector_gt = input_images.to(device), latent_vector_gt.to(device)
 
             if is_training:
+                network.train()
                 optimizer.zero_grad()
+            else:
+                network.eval()
 
             ##
             if torch.cuda.device_count() > 1:
@@ -207,6 +210,11 @@ if __name__ == '__main__':
 
 
     model_type = f"AutoEncoder-{config.encoder_type}-{config.decoder_type}" if config.network_type == 'AutoEncoder' else f"AutoDecoder-{config.decoder_type}"
-    debugger = MyDebugger(f'Image-Training-experiment-{os.path.basename(config.data_folder)}-{model_type}{config.special_symbol}', is_save_print_to_file = True, config_path = resume_path)
+    debugger = MyDebugger(
+        f'Image-Training-experiment-{os.path.basename(config.data_folder)}-{model_type}{config.special_symbol}', 
+        is_save_print_to_file = True, 
+        config_path = resume_path,
+        config=config,
+    )
     trainer = ImageTrainer(config = config, debugger = debugger, auto_encoder_cofig = auto_config)
     trainer.train_network()
