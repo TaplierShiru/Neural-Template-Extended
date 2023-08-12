@@ -42,9 +42,26 @@ class ImageEncoder(nn.Module):
     def __init__(self, config):
         super(ImageEncoder, self).__init__()
         self.img_ef_dim = config.img_ef_dim
+        # TODO: Remove or refactor below
+        """
         self.z_dim = config.decoder_input_embbeding_size * 2 if config.decoder_type == 'Flow' and hasattr(config,
                                                                                                           'flow_use_split_dim') \
                                                                 and config.flow_use_split_dim else config.decoder_input_embbeding_size
+        """
+        # Updated self.z_dim - just give output without any resctrickts
+        self.z_dim = config.output_channels
+        if hasattr(config, 'sample_class') and config.sample_class and self.z_dim / config.decoder_input_embbeding_size != 3:
+            raise Exception(
+                'Error! Sample class is expected but size of output encoder is not divided by 3 (number of modules). '
+                f'z_dim={self.z_dim}, decoder_input_embbeding_size={config.decoder_input_embbeding_size}.'
+            )
+        elif (not hasattr(config, 'sample_class') or (hasattr(config, 'sample_class') and not config.sample_class)) \
+                and self.z_dim / config.decoder_input_embbeding_size != 2:
+            raise Exception(
+                'Error! Output dim is not divided by 2 (number of modules). '
+                f'z_dim={self.z_dim}, decoder_input_embbeding_size={config.decoder_input_embbeding_size}.'
+            )
+
         self.conv_0 = nn.Conv2d(1, self.img_ef_dim, 7, stride=2, padding=3, bias=False)
         self.res_1 = resnet_block(self.img_ef_dim, self.img_ef_dim)
         self.res_2 = resnet_block(self.img_ef_dim, self.img_ef_dim)

@@ -38,7 +38,8 @@ class CNN3D(nn.Module):
                 'Error! Sample class is expected but size of output encoder is not divided by 3 (number of modules). '
                 f'output_dim={output_dim}, decoder_input_embbeding_size={config.decoder_input_embbeding_size}.'
             )
-        elif (not hasattr(config, 'sample_class') or (hasattr(config, 'sample_class') and not config.sample_class)) and output_dim / config.decoder_input_embbeding_size != 2:
+        elif (not hasattr(config, 'sample_class') or (hasattr(config, 'sample_class') and not config.sample_class)) \
+                and output_dim / config.decoder_input_embbeding_size != 2:
             raise Exception(
                 'Error! Output dim is not divided by 2 (number of modules). '
                 f'output_dim={output_dim}, decoder_input_embbeding_size={config.decoder_input_embbeding_size}.'
