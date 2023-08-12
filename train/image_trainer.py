@@ -3,13 +3,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
-from models.network import AutoEncoder, ImageAutoEncoder
+import os
+import argparse
+
+try:
+    from models.network import AutoEncoder, ImageAutoEncoder
+except ModuleNotFoundError:
+    # Append base path with all needed code
+    import pathlib
+    import sys
+    base_path, _ = os.path.split(pathlib.Path(__file__).parent.resolve())
+    sys.path.append(base_path)
+    # Try again
+    from models.network import AutoEncoder, ImageAutoEncoder
+
 from train.implicit_trainer import Trainer
 from data.data import ImNetImageSamples
 from torch.utils.data import DataLoader
 from utils.debugger import MyDebugger
-import os
-import argparse
+
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
@@ -37,7 +49,8 @@ class ImageTrainer(object):
 
         ### create dataset
         train_samples = ImNetImageSamples(data_path=self.config.data_path,
-                                          auto_encoder = auto_encoder)
+                                          auto_encoder = auto_encoder,
+                                          sample_class=hasattr(config, 'sample_class') and config.sample_class)
 
         train_data_loader = DataLoader(dataset=train_samples,
                                        batch_size=self.config.batch_size,
@@ -47,7 +60,8 @@ class ImageTrainer(object):
 
         if hasattr(self.config, 'use_testing') and self.config.use_testing:
             test_samples = ImNetImageSamples(data_path=self.config.data_path[:-10] + 'test.hdf5',
-                                        auto_encoder=auto_encoder)
+                                        auto_encoder=auto_encoder,
+                                        sample_class=hasattr(config, 'sample_class') and config.sample_class)
             test_data_loader = DataLoader(dataset=test_samples,
                                           batch_size=self.config.batch_size,
                                           num_workers=config.data_worker,
@@ -121,7 +135,13 @@ class ImageTrainer(object):
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         ###
-        for (input_images, latent_vector_gt), samples_indices in tepoch:
+        for inputs, samples_indices in tepoch:
+            if self.config.sample_class:
+                input_images, latent_vector_gt, class_ground_truth = inputs
+                # Keep class info for eval and future loss updates
+                class_ground_truth = class_ground_truth.to(device)
+            else:
+                input_images, latent_vector_gt = inputs
             input_images, latent_vector_gt = input_images.to(device), latent_vector_gt.to(device)
 
             if is_training:
