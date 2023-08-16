@@ -138,7 +138,12 @@ def main(args):
     ## dataload
     ### create dataset
     if args.input_type == 'image':
-        samples = ImNetImageSamples(data_path=args.data_path, label_txt_path=args.obj_txt_file)
+        samples = ImNetImageSamples(
+            data_path=args.data_path, 
+            label_txt_path=args.obj_txt_file,
+            use_depth=hasattr(config, 'use_depth') and config.use_depth,
+            image_preferred_color_space=config.image_preferred_color_space if hasattr(config, 'image_preferred_color_space') else 1
+        )
     elif args.input_type == 'voxels':
         # TODO: In some cases sample_voxel_size could have different size, add to args - not now cause not needed and dont used
         samples = ImNetSamples(data_path=args.data_path, sample_voxel_size=64, label_txt_path=args.obj_txt_file)
@@ -149,9 +154,8 @@ def main(args):
     sample_interval = 1
     resolution = 64
     max_batch = 20000 if args.input_type == 'image' else 100000
-    save_deformed = True
     thershold = 0.01
-    with_surface_point = True
+    with_surface_point = True # TODO: Is it needed here?
 
     device_count = torch.cuda.device_count() if args.max_number_gpu < 0 else args.max_number_gpu
     worker_nums = int(device_count * args.device_ratio)
