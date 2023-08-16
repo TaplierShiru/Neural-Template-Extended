@@ -61,8 +61,15 @@ class ImageEncoder(nn.Module):
                 'Error! Output dim is not divided by 2 (number of modules). '
                 f'z_dim={self.z_dim}, decoder_input_embbeding_size={config.decoder_input_embbeding_size}.'
             )
-
-        self.conv_0 = nn.Conv2d(1, self.img_ef_dim, 7, stride=2, padding=3, bias=False)
+        if hasattr(config, 'image_preferred_color_space'):
+            in_f = config.image_preferred_color_space
+        else:
+            in_f = 1
+        
+        if hasattr(config, 'use_depth') and config.use_depth:
+            in_f += 1
+        
+        self.conv_0 = nn.Conv2d(in_f, self.img_ef_dim, 7, stride=2, padding=3, bias=False)
         self.res_1 = resnet_block(self.img_ef_dim, self.img_ef_dim)
         self.res_2 = resnet_block(self.img_ef_dim, self.img_ef_dim)
         self.res_3 = resnet_block(self.img_ef_dim, self.img_ef_dim * 2)

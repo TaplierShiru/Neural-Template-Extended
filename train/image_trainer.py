@@ -50,7 +50,9 @@ class ImageTrainer(object):
         ### create dataset
         train_samples = ImNetImageSamples(data_path=self.config.data_path,
                                           auto_encoder = auto_encoder,
-                                          sample_class=hasattr(config, 'sample_class') and config.sample_class)
+                                          sample_class=hasattr(config, 'sample_class') and config.sample_class,
+                                          use_depth=hasattr(config, 'use_depth') and config.use_depth,
+                                          image_preferred_color_space=config.image_preferred_color_space if hasattr(config, 'image_preferred_color_space') else 1)
 
         train_data_loader = DataLoader(dataset=train_samples,
                                        batch_size=self.config.batch_size,
@@ -136,7 +138,7 @@ class ImageTrainer(object):
             torch.cuda.empty_cache()
         ###
         for inputs, samples_indices in tepoch:
-            if self.config.sample_class:
+            if hasattr(config, 'sample_class') and self.config.sample_class:
                 input_images, latent_vector_gt, class_ground_truth = inputs
                 # Keep class info for eval and future loss updates
                 class_ground_truth = class_ground_truth.to(device)
