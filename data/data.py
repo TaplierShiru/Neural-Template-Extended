@@ -109,7 +109,10 @@ class ImNetImageSamples(torch.utils.data.Dataset):
                 )
             else:
                 self.data_pixels = np.transpose(
-                    data_dict['pixels'][:, :, offset_y:offset_y + self.crop_size, offset_x:offset_x + self.crop_size, None],
+                    np.expand_dims(
+                        data_dict['pixels'][:, :, offset_y:offset_y + self.crop_size, offset_x:offset_x + self.crop_size],
+                        axis=-1
+                    ),
                     # (N, n view, H, W, color) -> (N, n view, color, H, W)
                     (0, 1, -1, 2, 3)
                 )
