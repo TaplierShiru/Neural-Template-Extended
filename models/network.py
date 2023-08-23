@@ -33,29 +33,28 @@ class ImageAutoEncoder(nn.Module):
 
 class ImageAutoEncoderEndToEnd(nn.Module):
     ## init
-    def __init__(self, config):
+    def __init__(self, config, auto_encoder_config):
         super().__init__()
         self.config = config
+        self.auto_encoder_config = auto_encoder_config
+        
         self.image_encoder = ImageEncoder(config = self.config)
 
         network_state_dict = torch.load(self.config.auto_encoder_resume_path)
         network_state_dict = ImageAutoEncoderEndToEnd.process_state_dict(network_state_dict, type = 1)
-        self.auto_encoder = AutoEncoder(config)
+        self.auto_encoder = AutoEncoder(auto_encoder_config)
         self.auto_encoder.load_state_dict(network_state_dict)
         self.auto_encoder.train()
 
         print(f"Reloaded the Auto encoder from {self.config.auto_encoder_resume_path}")
 
-    def forward(self, images = None, coordinates_inputs = None):
-
+    def forward(self, images, coordinates_inputs = None):
+        embedding = self.image_encoder(images)
         if coordinates_inputs is None:
-            return self.image_encoder(images)
-        else:
-            embedding = self.image_encoder(images)
+            return embedding
 
-            outputs = self.auto_encoder.decoder(embedding, coordinates_inputs)
-
-            return outputs
+        outputs = self.auto_encoder.decoder(embedding, coordinates_inputs)
+        return outputs, embedding
 
 
     @staticmethod
