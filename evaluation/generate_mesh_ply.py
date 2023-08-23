@@ -25,7 +25,7 @@ from utils.other_utils import write_ply_point_normal
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 def extract_one_input(args):
-    args_list, network_path, config_path, device_id, sample_normal_points, input_type = args
+    args_list, network_path, config_path, device_id, sample_normal_points, input_type, aggregate_embedding = args
     print(f'Start generation with number of args {len(args_list)} and device id {device_id}')
 
     torch.cuda.set_device(device_id)
@@ -67,26 +67,33 @@ def extract_one_input(args):
             if os.path.exists(store_file_path[:-4] + '_deformed.ply'):
                 print(f"{store_file_path} exists!")
                 continue
-                
-            input_data = torch.from_numpy(input_data).float().cuda(device_id)
-            input_data = input_data.unsqueeze(0)
-            # new embedding
-            if input_type == 'image':
-                embedding = network.image_encoder(input_data)
-                result = network.auto_encoder.save_bsp_deform(
-                    inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
-                    space_range=space_range, thershold_1=thershold, embedding=embedding,
-                    return_voxel_and_values=True
+            
+            if not isinstance(input_data, list) or (isinstance(input_data, list) and len(input_data) == 1):
+                input_data = torch.from_numpy(input_data[0] if isinstance(input_data, list) else input_data).float().cuda(device_id)
+                input_data = input_data.unsqueeze(0)
+                result = generate_3d_mesh(
+                    network=network, embedding=None, input_type=input_type,
+                    store_file_path=store_file_path, 
+                    resolution=resolution, max_batch=max_batch,
+                    space_range=space_range, thershold=thershold,
+                    input_data=input_data,
                 )
-            elif input_type == 'voxels':
-                embedding = network.encoder(input_data)
-                result = network.save_bsp_deform(
-                    inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
-                    space_range=space_range, thershold_1=thershold, embedding=embedding,
-                    return_voxel_and_values=True
+            elif len(input_data) > 1 and aggregate_embedding:
+                embeddings_list = []
+                for input_data_single in input_data:
+                    input_data_single = torch.from_numpy(input_data_single).float().cuda(device_id)
+                    input_data_single = input_data_single.unsqueeze(0)
+                    embeddings_list.append(
+                        get_embedding(network, input_data_single, input_type)
+                    )
+                embedding = torch.stack(embeddings_list).mean(dim=0) # TODO: mean or median?
+                result = generate_3d_mesh(
+                    network=network, embedding=embedding, input_type=input_type,
+                    store_file_path=store_file_path, resolution=resolution, max_batch=max_batch,
+                    space_range=space_range, thershold=thershold
                 )
             else:
-                raise Exception(f'Unknown input type {input_type}. ')
+                raise Exception('Unknown mode for network.')
 
             if hasattr(config, 'sample_class') and config.sample_class:
                 (vertices, polygons, vertices_deformed, polygons_deformed, 
@@ -123,6 +130,39 @@ def extract_one_input(args):
                 np.random.shuffle(sampled_points_normals)
                 # TODO: Is constraints with 4096 points needed here?
                 write_ply_point_normal(store_file_path[:-4] + '_normals.ply', sampled_points_normals[:4096])
+
+
+def get_embedding(network, input_data, input_type):
+    if input_type == 'image':
+        embedding = network.image_encoder(input_data)
+    elif input_type == 'voxels':
+        embedding = network.encoder(input_data)
+    else:
+        raise Exception(f'Unknown input type {input_type}. ')
+    return embedding
+
+
+def generate_3d_mesh(network, embedding, input_type, store_file_path, resolution, max_batch, space_range, thershold, input_data=None):
+    if embedding is None and input_data is not None:
+        embedding = get_embedding(network, input_data, input_type)
+    elif embedding is None and input_data is None:
+        raise Exception('Embedding is none for the network with no input data given.')
+
+    if input_type == 'image':
+        result = network.auto_encoder.save_bsp_deform(
+            inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
+            space_range=space_range, thershold_1=thershold, embedding=embedding,
+            return_voxel_and_values=True
+        )
+    elif input_type == 'voxels':
+        result = network.save_bsp_deform(
+            inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
+            space_range=space_range, thershold_1=thershold, embedding=embedding,
+            return_voxel_and_values=True
+        )
+    else:
+        raise Exception(f'Unknown input type {input_type}. ')
+    return result
 
 
 def split(a, n):
@@ -163,10 +203,35 @@ def main(args):
     print(f'Start generation with device_count={device_count} and worker_nums={worker_nums}')
     if args.sample_normal_points:
         print('Also generate normal points for each final obj')
+    
+    if args.aggregate_embedding:
+        if args.num_input_data_aggregation == None:
+            print('Aggregation is True, but number of data is missing. Skip aggregation.')
+        else:
+            print(f'Aggregate input embedding by {args.num_input_data_aggregation if args.num_input_data_aggregation != -1 else samples.view_num} samples')
+        
+        if args.input_type != 'image':
+            raise Exception('Aggregation supported only by images!')
+
+    def get_input_data(samples, i, num_input_data_aggregation, aggregate_embedding):
+        if aggregate_embedding and num_input_data_aggregation is not None:
+            if num_input_data_aggregation == -1:
+                gathered_data_list = []
+                for indx_view in range(samples.view_num):
+                    samples.image_idx = indx_view
+                    gathered_data_list.append(
+                        samples[i][0][0]
+                    )
+                samples.image_idx = None
+                return gathered_data_list
+            else:
+                return [samples[i][0][0] for _ in range(num_input_data_aggregation)]
+        
+        return samples[i][0][0]
 
     generate_args = [
         (
-            samples[i][0][0], 
+            get_input_data(samples, i, args.num_input_data_aggregation, args.aggregate_embedding), 
             os.path.join(args.save_folder, samples.obj_paths[i]), 
             resolution, max_batch, (-0.5, 0.5), 
             thershold, with_surface_point
@@ -180,7 +245,7 @@ def main(args):
         (
             splited_args[i], args.network_path, args.config_path, 
             i % device_count, args.sample_normal_points,
-            args.input_type,
+            args.input_type, args.aggregate_embedding
         ) 
         for i in range(worker_nums)
     ]
@@ -213,6 +278,11 @@ if __name__ == '__main__':
                         help='Path to save prepared data.', default='./')
     parser.add_argument('--sample-normal-points', action='store_true',
                         help='If provided when normal points will be generated for ply. ')
+    parser.add_argument('--aggregate-embedding', action='store_true',
+                        help='If provided when embedding will be aggregated using several number of inputs equal to number in `num-input-data-aggregation`. ')
+    parser.add_argument('--num-input-data-aggregation', type=int, default=None,
+                        help='Number of input data for aggregation of embedding vectors. '
+                        'By default equal to None, i.e. will be not used, if equal to -1 when will be used all views.')
     parser.add_argument('--max-number-gpu', type=int, default=-1,
                         help='Max number of GPUs to use. By default equal to -1, i.e. will be used all GPUs.')
     parser.add_argument('--device-ratio', type=int, default=1,
