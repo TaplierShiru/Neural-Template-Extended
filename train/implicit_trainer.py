@@ -196,6 +196,14 @@ class Trainer:
 
             loss = self.config.loss_fn(torch.clamp(prediction, min=0, max=1), occupancy_ground_truth)
 
+            ### loss function to be refactor
+            if (self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True) or self.config.decoder_type == 'MVP':
+                loss, losses = self.flow_bsp_loss(loss, losses, network,
+                                                  occupancy_ground_truth,
+                                                  prediction, convex_layer_weights)
+            else:
+                raise Exception("Unknown Network Type....")
+
             if hasattr(self.config, 'sample_class') and self.config.sample_class and class_prediction is not None:
                 class_loss = self.config.class_loss_fn(class_prediction, class_ground_truth.long())
                 # (N, n_class)
@@ -210,14 +218,6 @@ class Trainer:
                 print_dict['acc'] = '{:.2%}'.format(avg_accuracy)
                 
                 loss = loss + class_loss
-
-            ### loss function to be refactor
-            if (self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True) or self.config.decoder_type == 'MVP':
-                loss, losses = self.flow_bsp_loss(loss, losses, network,
-                                                  occupancy_ground_truth,
-                                                  prediction, convex_layer_weights)
-            else:
-                raise Exception("Unknown Network Type....")
 
             if is_training:
                 loss.backward()

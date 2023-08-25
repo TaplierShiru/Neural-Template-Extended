@@ -177,9 +177,22 @@ class ImageTrainer(object):
                 ## output results
                 loss = loss_fn(pred_latent_vector, latent_vector_gt)
                 losses.append(loss.item())
-                ode_loss = loss = self.config.loss_fn(torch.clamp(prediction, min=0, max=1), occupancy_ground_truth)
+                if self.config.bsp_phase == 0 or \
+                        not (
+                                (self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True) or \
+                                self.config.decoder_type == 'MVP'):
+                    ode_loss = self.config.loss_fn(
+                        torch.clamp(prediction, min=0, max=1), 
+                        occupancy_ground_truth
+                    ) # Ussaly MSE
+                elif self.config.bsp_phase == 1:
+                    ode_loss = torch.mean((1 - occupancy_ground_truth) * (
+                            1 - torch.clamp(prediction, max=1)) + occupancy_ground_truth * torch.clamp(
+                        prediction, min=0))
+                else:
+                    raise Exception("Unknown Phase.....")
                 loss = loss + ode_loss
-                losses.append(ode_loss.item())
+                losses.append(ode_loss.detach().item())
 
                 if hasattr(self.config, 'sample_class') and self.config.sample_class and class_prediction is not None:
                     class_loss = self.config.class_loss_fn(class_prediction, class_ground_truth.long())
@@ -196,15 +209,6 @@ class ImageTrainer(object):
                     
                     loss = loss + class_loss
                     losses.append(class_loss.item())
-
-                ### loss function to be refactor
-                
-                if (self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True) or self.config.decoder_type == 'MVP':
-                    loss, losses = self.flow_bsp_loss(loss, losses, network,
-                                                    occupancy_ground_truth,
-                                                    prediction, convex_layer_weights)
-                else:
-                    raise Exception("Unknown Network Type....")
             
             if is_training:
                 loss.backward()
@@ -213,34 +217,6 @@ class ImageTrainer(object):
             tepoch.set_postfix(loss=f'{np.mean(losses)}')
 
         return losses
-
-    def flow_bsp_loss(self, loss, losses, network, occupancy_ground_truth, prediction, convex_layer_weights):
-
-        bsp_thershold = self.config.bsp_thershold if hasattr(self.config, 'bsp_thershold') else 0.01
-        if self.config.bsp_phase == 0:
-            concave_layer_weights = network.auto_encoder.decoder.bsp_field.concave_layer_weights \
-                if torch.cuda.device_count() <= 1 \
-                    else network.module.auto_encoder.decoder.bsp_field.concave_layer_weights
-            losses.append(loss.detach().item())
-            loss = loss + torch.sum(
-                torch.abs(concave_layer_weights - 1))  ### convex layer weight close to 1
-            loss = loss + torch.sum(
-                torch.clamp(convex_layer_weights - 1, min=0) - torch.clamp(convex_layer_weights,
-                                                                           max=0))
-        elif self.config.bsp_phase == 1:
-            loss = torch.mean((1 - occupancy_ground_truth) * (
-                    1 - torch.clamp(prediction, max=1)) + occupancy_ground_truth * torch.clamp(
-                prediction, min=0))
-            losses.append(loss.detach().item())
-            loss = loss + torch.sum(
-                (convex_layer_weights < bsp_thershold).float() * torch.abs(
-                    convex_layer_weights)) + torch.sum(
-                (convex_layer_weights >= bsp_thershold).float() * torch.abs(convex_layer_weights - 1))
-        else:
-            raise Exception("Unknown Phase.....")
-
-
-        return loss, losses
 
     def extract_prediction(self, predictions_packed):
         assert self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True
