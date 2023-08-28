@@ -129,7 +129,7 @@ class Trainer:
                                     return_avg_accuracy=True
                                 )
                                 final_print = 'Test epoch {} | Loss : {:.4f} '.format(idx, np.mean(losses))
-                                if self.config.sample_class and avg_accuracy is not None:
+                                if hasattr(self.config, 'sample_class') and self.config.sample_class and avg_accuracy is not None:
                                     final_print += '; avg accuracy : {:.2%}'.format(avg_accuracy)
                                 print(final_print)
                                 
@@ -164,7 +164,7 @@ class Trainer:
         for inputs, samples_indices in tepoch:
             print_dict = {}
             ## get voxel_inputs
-            if self.config.sample_class:
+            if hasattr(self.config, 'sample_class') and self.config.sample_class:
                 voxels_inputs, coordinate_inputs, occupancy_ground_truth, class_ground_truth = inputs
                 class_ground_truth = class_ground_truth.to(device)
             else:
@@ -186,7 +186,7 @@ class Trainer:
             else:
                 raise Exception("Unknown Network Type....")
 
-            if self.config.sample_class:
+            if hasattr(self.config, 'sample_class') and self.config.sample_class:
                 convex_prediction, prediction, exist, convex_layer_weights, class_prediction = (
                     self.extract_prediction(prediction)
                 )
@@ -196,7 +196,15 @@ class Trainer:
 
             loss = self.config.loss_fn(torch.clamp(prediction, min=0, max=1), occupancy_ground_truth)
 
-            if self.config.sample_class and class_prediction is not None:
+            ### loss function to be refactor
+            if (self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True) or self.config.decoder_type == 'MVP':
+                loss, losses = self.flow_bsp_loss(loss, losses, network,
+                                                  occupancy_ground_truth,
+                                                  prediction, convex_layer_weights)
+            else:
+                raise Exception("Unknown Network Type....")
+
+            if hasattr(self.config, 'sample_class') and self.config.sample_class and class_prediction is not None:
                 class_loss = self.config.class_loss_fn(class_prediction, class_ground_truth.long())
                 # (N, n_class)
                 class_accuracy = (
@@ -210,14 +218,6 @@ class Trainer:
                 print_dict['acc'] = '{:.2%}'.format(avg_accuracy)
                 
                 loss = loss + class_loss
-
-            ### loss function to be refactor
-            if (self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True) or self.config.decoder_type == 'MVP':
-                loss, losses = self.flow_bsp_loss(loss, losses, network,
-                                                  occupancy_ground_truth,
-                                                  prediction, convex_layer_weights)
-            else:
-                raise Exception("Unknown Network Type....")
 
             if is_training:
                 loss.backward()
@@ -259,7 +259,7 @@ class Trainer:
     def extract_prediction(self, predictions_packed):
         assert self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True
         convex_prediction, prediction, exist, convex_layer_weights = predictions_packed[:4]
-        if self.config.sample_class:
+        if hasattr(self.config, 'sample_class') and self.config.sample_class:
             predicted_class = predictions_packed[-1] 
             return convex_prediction, prediction, exist, convex_layer_weights, predicted_class
         return convex_prediction, prediction, exist, convex_layer_weights
