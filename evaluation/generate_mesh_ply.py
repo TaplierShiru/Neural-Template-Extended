@@ -181,6 +181,7 @@ def main(args):
         samples = ImNetImageSamples(
             data_path=args.data_path, 
             label_txt_path=args.obj_txt_file,
+            image_idx=23, # Last image, stick to BSP-Net calc
             use_depth=hasattr(config, 'use_depth') and config.use_depth,
             image_preferred_color_space=config.image_preferred_color_space if hasattr(config, 'image_preferred_color_space') else 1
         )
@@ -213,25 +214,29 @@ def main(args):
         if args.input_type != 'image':
             raise Exception('Aggregation supported only by images!')
 
-    def get_input_data(samples, i, num_input_data_aggregation, aggregate_embedding):
-        if aggregate_embedding and num_input_data_aggregation is not None:
-            if num_input_data_aggregation == -1:
-                gathered_data_list = []
-                for indx_view in range(samples.view_num):
-                    samples.image_idx = indx_view
-                    gathered_data_list.append(
-                        samples[i][0][0]
-                    )
-                samples.image_idx = None
-                return gathered_data_list
+    def get_input_data(samples, i, num_input_data_aggregation, aggregate_embedding, view_use_indx_list):
+        if aggregate_embedding:
+            if num_input_data_aggregation is not None and num_input_data_aggregation == -1 and view_use_indx_list is None:
+                indx_view_iterator = range(samples.view_num)
+            elif view_use_indx_list is not None and len(view_use_indx_list) > 0:
+                indx_view_iterator = view_use_indx_list
             else:
                 return [samples[i][0][0] for _ in range(num_input_data_aggregation)]
+            gathered_data_list = []
+            for indx_view in indx_view_iterator:
+                samples.image_idx = indx_view
+                gathered_data_list.append(
+                    samples[i][0][0]
+                )
+            # Can be set to None, we dont care here about value 23 
+            samples.image_idx = None
+            return gathered_data_list
         
         return samples[i][0][0]
 
     generate_args = [
         (
-            get_input_data(samples, i, args.num_input_data_aggregation, args.aggregate_embedding), 
+            get_input_data(samples, i, args.num_input_data_aggregation, args.aggregate_embedding, args.view_use_indx_args), 
             os.path.join(args.save_folder, samples.obj_paths[i]), 
             resolution, max_batch, (-0.5, 0.5), 
             thershold, with_surface_point
@@ -283,6 +288,9 @@ if __name__ == '__main__':
     parser.add_argument('--num-input-data-aggregation', type=int, default=None,
                         help='Number of input data for aggregation of embedding vectors. '
                         'By default equal to None, i.e. will be not used, if equal to -1 when will be used all views.')
+    parser.add_argument('--view-use-indx-args', nargs='*', default=None,
+                        help='If input data is `image` and `aggregate-embedding` is used, '
+                        'when listed indexes in `view-use-indx-args` will be used for aggregation and object generation.')
     parser.add_argument('--max-number-gpu', type=int, default=-1,
                         help='Max number of GPUs to use. By default equal to -1, i.e. will be used all GPUs.')
     parser.add_argument('--device-ratio', type=int, default=1,
