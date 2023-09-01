@@ -90,10 +90,10 @@ class ImageTrainer(object):
             self.config.network_resume_path = None
 
         if torch.cuda.device_count() > 1:
-            optimizer = torch.optim.Adam(params=network.module.image_encoder.parameters(), lr=self.config.lr,
+            optimizer = torch.optim.Adam(params=network.module.encoder.parameters(), lr=self.config.lr,
                                          betas=(self.config.beta1, 0.999))
         else:
-            optimizer = torch.optim.Adam(params=network.image_encoder.parameters(), lr=self.config.lr,
+            optimizer = torch.optim.Adam(params=network.encoder.parameters(), lr=self.config.lr,
                                          betas=(self.config.beta1, 0.999))
 
         if self.config.optimizer_resume_path is not None:
@@ -159,18 +159,11 @@ class ImageTrainer(object):
                 network.eval()
 
             if not use_additional_losses:
-                # TODO: Handle different architecture network, 
-                #       otherwise keep interface same for every new network
-                if torch.cuda.device_count() > 1:
-                    pred_latent_vector = network.module.image_encoder(input_images)
-                else:
-                    pred_latent_vector = network.image_encoder(input_images)
                 ## output results
+                pred_latent_vector = network(input_images)
                 loss = loss_fn(pred_latent_vector, latent_vector_gt)
                 losses.append(loss.item())
             else:
-                # TODO: Handle different architecture network, 
-                #       otherwise keep interface same for every new network
                 prediction, pred_latent_vector = network(input_images, coordinate_inputs)
 
                 if hasattr(self.config, 'sample_class') and self.config.sample_class:

@@ -25,10 +25,10 @@ device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cp
 
 class ImageTrainer(object):
 
-    def __init__(self, config, debugger, auto_encoder_cofig):
+    def __init__(self, config, debugger, auto_encoder_config):
         self.debugger = debugger
         self.config = config
-        self.auto_encoder_cofig = auto_encoder_cofig
+        self.auto_encoder_config = auto_encoder_config
 
     def train_network(self):
         if self.config.encoder_type.upper() != 'IMAGE':
@@ -92,10 +92,10 @@ class ImageTrainer(object):
             self.config.network_resume_path = None
 
         if torch.cuda.device_count() > 1:
-            optimizer = torch.optim.Adam(params=network.module.image_encoder.parameters(), lr=self.config.lr,
+            optimizer = torch.optim.Adam(params=network.module.encoder.parameters(), lr=self.config.lr,
                                          betas=(self.config.beta1, 0.999))
         else:
-            optimizer = torch.optim.Adam(params=network.image_encoder.parameters(), lr=self.config.lr,
+            optimizer = torch.optim.Adam(params=network.encoder.parameters(), lr=self.config.lr,
                                          betas=(self.config.beta1, 0.999))
 
         if self.config.optimizer_resume_path is not None:
@@ -153,13 +153,7 @@ class ImageTrainer(object):
             else:
                 network.eval()
 
-            ##
-            if torch.cuda.device_count() > 1:
-                pred_latent_vector = network.module.image_encoder(input_images)
-            else:
-                pred_latent_vector = network.image_encoder(input_images)
-
-            ## output results
+            pred_latent_vector = network(input_images)
             loss = loss_fn(pred_latent_vector, latent_vector_gt)
             losses.append(loss.item())
 
@@ -219,5 +213,5 @@ if __name__ == '__main__':
         config_path = resume_path,
         config=config,
     )
-    trainer = ImageTrainer(config = config, debugger = debugger, auto_encoder_cofig = auto_config)
+    trainer = ImageTrainer(config = config, debugger = debugger, auto_encoder_config = auto_config)
     trainer.train_network()

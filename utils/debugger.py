@@ -59,9 +59,7 @@ class MyDebugger():
 
     def _init_debug_dir(self):
         # init root debug dir
-        if not os.path.exists(MyDebugger.pre_fix):
-            os.mkdir(MyDebugger.pre_fix)
-        os.mkdir(self._debug_dir_name)
+        os.makedirs(self._debug_dir_name, exist_ok=True)
         logging.info("Directory %s established" % self._debug_dir_name)
 
 
