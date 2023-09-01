@@ -7,7 +7,7 @@ import os
 import argparse
 
 try:
-    from models.network import ImageAutoEncoderEndToEnd
+    from models.network import AutoEncoder
 except ModuleNotFoundError:
     # Append base path with all needed code
     import pathlib
@@ -15,9 +15,8 @@ except ModuleNotFoundError:
     base_path, _ = os.path.split(pathlib.Path(__file__).parent.resolve())
     sys.path.append(base_path)
     # Try again
-    from models.network import ImageAutoEncoderEndToEnd
+    from models.network import AutoEncoder
 
-from train.implicit_trainer import Trainer
 from data.data import ImNetAllDataSamples
 from torch.utils.data import DataLoader
 from utils.debugger import MyDebugger
@@ -27,25 +26,33 @@ device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cp
 
 class ImageTrainer(object):
 
-    def __init__(self, config, debugger, auto_encoder_cofig):
+    def __init__(self, config, debugger, auto_encoder_config):
         self.debugger = debugger
         self.config = config
-        self.auto_encoder_cofig = auto_encoder_cofig
+        self.auto_encoder_config = auto_encoder_config
 
     def train_network(self):
-
-
+        if self.config.encoder_type.upper() != 'IMAGE':
+            print('In config encoder type is not Image, but training IS for Image. '
+                  'Change encoder type to Image'
+            )
+            self.config.encoder_type = 'IMAGE'
         ### Network
-        network = ImageAutoEncoderEndToEnd(
-            config=self.config, 
-            auto_encoder_config=self.auto_encoder_cofig
-        )
-        network = network.to(device)
+        network_state_dict = torch.load(self.config.auto_encoder_resume_path)
+        network_state_dict, _ = AutoEncoder.process_state_dict(network_state_dict, type = 1)
+        voxel_auto_encoder = AutoEncoder(self.auto_encoder_config)
+        voxel_auto_encoder.load_state_dict(network_state_dict)
+        voxel_auto_encoder.to(device)
+        print(f"Reloaded the Auto encoder from {self.config.auto_encoder_resume_path}")
+
         self.config.auto_encoder_resume_path = None
+
+        network = AutoEncoder(self.config)
+        network = network.to(device)
 
         ### create dataset
         train_samples = ImNetAllDataSamples(data_path=self.config.data_path,
-                                          auto_encoder = network.auto_encoder,
+                                          auto_encoder = voxel_auto_encoder,
                                           sample_class=hasattr(config, 'sample_class') and config.sample_class,
                                           use_depth=hasattr(config, 'use_depth') and config.use_depth,
                                           image_preferred_color_space=config.image_preferred_color_space if hasattr(config, 'image_preferred_color_space') else 1)
@@ -58,7 +65,7 @@ class ImageTrainer(object):
 
         if hasattr(self.config, 'use_testing') and self.config.use_testing:
             test_samples = ImNetAllDataSamples(data_path=self.config.data_path[:-10] + 'test.hdf5',
-                                        auto_encoder=auto_encoder,
+                                        auto_encoder=voxel_auto_encoder,
                                         sample_class=hasattr(config, 'sample_class') and config.sample_class)
             test_data_loader = DataLoader(dataset=test_samples,
                                           batch_size=self.config.batch_size,
@@ -76,7 +83,7 @@ class ImageTrainer(object):
         ## reload the network if needed
         if self.config.network_resume_path is not None:
             network_state_dict = torch.load(self.config.network_resume_path)
-            network_state_dict = Trainer.process_state_dict(network_state_dict)
+            network_state_dict = AutoEncoder.process_state_dict(network_state_dict)
             network.load_state_dict(network_state_dict)
             network.train()
             print(f"Reloaded the network from {self.config.network_resume_path}")
@@ -274,5 +281,5 @@ if __name__ == '__main__':
         config_path = resume_path,
         config=config,
     )
-    trainer = ImageTrainer(config = config, debugger = debugger, auto_encoder_cofig = auto_config)
+    trainer = ImageTrainer(config = config, debugger = debugger, auto_encoder_config = auto_config)
     trainer.train_network()

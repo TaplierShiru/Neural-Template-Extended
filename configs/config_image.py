@@ -12,6 +12,12 @@ output_channels = 256
 
 ## setting for image encoder
 img_ef_dim = 64
+# TODO: Handle parameters for new image encoder. Possibility to run old and new image-encoder
+# type_img_encoder ImageEncoder ImageEncoderOriginal
+# img_arch_type resnet18 resnet34 resnet50
+# img_final_act_func torch.sigmoid torch.tanh None
+# type_block ResNetBlockSM ResNetBlockSMBN # affect only ResNeT18 and ResNet34
+# img_linear_use_bn True False
 
 #### setting for decoder
 decoder_input_embbeding_size = 128
@@ -47,7 +53,7 @@ bsp_thershold = 0.01
 #### Training
 data_worker = 0
 coordinate_max_len = 500000
-encoder_type = '3DCNN'
+encoder_type = 'IMAGE' # Originally here 3DCNN, but I change code to readable state, so here now Image
 decoder_type = 'Flow'
 network_type = 'AutoEncoder'
 lr = 5e-5

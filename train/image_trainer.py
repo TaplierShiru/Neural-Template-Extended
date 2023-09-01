@@ -1,13 +1,12 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 import os
 import argparse
 
 try:
-    from models.network import AutoEncoder, ImageAutoEncoder
+    from models.network import AutoEncoder
 except ModuleNotFoundError:
     # Append base path with all needed code
     import pathlib
@@ -15,9 +14,8 @@ except ModuleNotFoundError:
     base_path, _ = os.path.split(pathlib.Path(__file__).parent.resolve())
     sys.path.append(base_path)
     # Try again
-    from models.network import AutoEncoder, ImageAutoEncoder
+    from models.network import AutoEncoder
 
-from train.implicit_trainer import Trainer
 from data.data import ImNetImageSamples
 from torch.utils.data import DataLoader
 from utils.debugger import MyDebugger
@@ -33,23 +31,28 @@ class ImageTrainer(object):
         self.auto_encoder_cofig = auto_encoder_cofig
 
     def train_network(self):
-
-
+        if self.config.encoder_type.upper() != 'IMAGE':
+            print('In config encoder type is not Image, but training IS for Image. '
+                  'Change encoder type to Image'
+            )
+            self.config.encoder_type = 'IMAGE'
+        
         ### Network
-        auto_encoder = AutoEncoder(config=self.auto_encoder_cofig)
-
         network_state_dict = torch.load(self.config.auto_encoder_resume_path)
-        network_state_dict = Trainer.process_state_dict(network_state_dict, type = 1)
-        auto_encoder.load_state_dict(network_state_dict)
-        auto_encoder.train()
-        auto_encoder.to(device)
-
+        network_state_dict, _ = AutoEncoder.process_state_dict(network_state_dict, type = 1)
+        voxel_auto_encoder = AutoEncoder(self.auto_encoder_config)
+        voxel_auto_encoder.load_state_dict(network_state_dict)
+        voxel_auto_encoder.to(device)
         print(f"Reloaded the Auto encoder from {self.config.auto_encoder_resume_path}")
+        
+        network = AutoEncoder(self.config)
+        network = network.to(device)
+
         self.config.auto_encoder_resume_path = None
 
         ### create dataset
         train_samples = ImNetImageSamples(data_path=self.config.data_path,
-                                          auto_encoder = auto_encoder,
+                                          auto_encoder = voxel_auto_encoder,
                                           sample_class=hasattr(config, 'sample_class') and config.sample_class,
                                           use_depth=hasattr(config, 'use_depth') and config.use_depth,
                                           image_preferred_color_space=config.image_preferred_color_space if hasattr(config, 'image_preferred_color_space') else 1)
@@ -62,7 +65,7 @@ class ImageTrainer(object):
 
         if hasattr(self.config, 'use_testing') and self.config.use_testing:
             test_samples = ImNetImageSamples(data_path=self.config.data_path[:-10] + 'test.hdf5',
-                                        auto_encoder=auto_encoder,
+                                        auto_encoder=voxel_auto_encoder,
                                         sample_class=hasattr(config, 'sample_class') and config.sample_class)
             test_data_loader = DataLoader(dataset=test_samples,
                                           batch_size=self.config.batch_size,
@@ -71,20 +74,18 @@ class ImageTrainer(object):
                                           drop_last=False)
 
         ### set up network
-        network = ImageAutoEncoder(config = self.config)
-        network.set_autoencoder(auto_encoder)
         if torch.cuda.is_available() and torch.cuda.device_count() > 1:
             print(f"Use {torch.cuda.device_count()} GPUS!")
             network = nn.DataParallel(network)
 
         network = network.to(device)
-
+        
         loss_fn = torch.nn.MSELoss()
 
         ## reload the network if needed
         if self.config.network_resume_path is not None:
             network_state_dict = torch.load(self.config.network_resume_path)
-            network_state_dict = Trainer.process_state_dict(network_state_dict)
+            network_state_dict = AutoEncoder.process_state_dict(network_state_dict)
             network.load_state_dict(network_state_dict)
             network.train()
             print(f"Reloaded the network from {self.config.network_resume_path}")

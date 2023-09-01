@@ -162,6 +162,7 @@ class ImNetImageSamples(torch.utils.data.Dataset):
 
 
     def extract_latent_vector(self, data_voxels,  auto_encoder, max_batch):
+        auto_encoder.eval() # TODO: It should be eval, right?
         num_batch = int(np.ceil(data_voxels.shape[0] / max_batch))
 
         results = []

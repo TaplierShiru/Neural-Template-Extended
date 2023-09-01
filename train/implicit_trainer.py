@@ -90,7 +90,7 @@ class Trainer:
             ## reload the network if needed
             if self.config.network_resume_path is not None:
                 network_state_dict = torch.load(self.config.network_resume_path)
-                network_state_dict = Trainer.process_state_dict(network_state_dict)
+                network_state_dict = AutoEncoder.process_state_dict(network_state_dict)
                 network.load_state_dict(network_state_dict)
                 print(f"Reloaded the network from {self.config.network_resume_path}")
                 self.config.network_resume_path = None
@@ -182,7 +182,7 @@ class Trainer:
                 device), samples_indices.to(device)
 
             if self.config.network_type == 'AutoEncoder':
-                prediction = network(voxels_inputs, coordinate_inputs)
+                prediction, _ = network(voxels_inputs, coordinate_inputs)
             else:
                 raise Exception("Unknown Network Type....")
 
@@ -263,24 +263,6 @@ class Trainer:
             predicted_class = predictions_packed[-1] 
             return convex_prediction, prediction, exist, convex_layer_weights, predicted_class
         return convex_prediction, prediction, exist, convex_layer_weights
-
-    @staticmethod
-    def process_state_dict(network_state_dict, type = 0):
-
-        if torch.cuda.device_count() >= 2 and type == 0:
-            for key, item in list(network_state_dict.items()):
-                if key[:7] != 'module.':
-                    new_key = 'module.' + key
-                    network_state_dict[new_key] = item
-                    del network_state_dict[key]
-        else:
-            for key, item in list(network_state_dict.items()):
-                if key[:7] == 'module.':
-                    new_key = key[7:]
-                    network_state_dict[new_key] = item
-                    del network_state_dict[key]
-
-        return network_state_dict
 
 
 if __name__ == '__main__':

@@ -6,7 +6,7 @@ import os
 import argparse
 
 try:
-    from models.network import AutoEncoder, ImageAutoEncoder
+    from models.network import AutoEncoder
 except ModuleNotFoundError:
     # Append base path with all needed code
     import pathlib
@@ -14,7 +14,7 @@ except ModuleNotFoundError:
     base_path, _ = os.path.split(pathlib.Path(__file__).parent.resolve())
     sys.path.append(base_path)
     # Try again
-    from models.network import AutoEncoder, ImageAutoEncoder
+    from models.network import AutoEncoder
 
 from data.data import ImNetImageSamples, ImNetSamples
 from torch.multiprocessing import Pool, Process, set_start_method
@@ -25,6 +25,7 @@ from utils.other_utils import write_ply_point_normal
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 def extract_one_input(args):
+    # TODO: Input type could be removed, but may be its better to keep it?
     args_list, network_path, config_path, device_id, sample_normal_points, input_type, aggregate_embedding = args
     print(f'Start generation with number of args {len(args_list)} and device id {device_id}')
 
@@ -33,27 +34,13 @@ def extract_one_input(args):
     config = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(config)
 
-    if input_type == 'image':
-        network = ImageAutoEncoder(config=config).cuda(device_id)
-
-        ### set autoencoder
-        assert hasattr(config, 'auto_encoder_config_path') and os.path.exists(config.auto_encoder_config_path)
-        auto_spec = importlib.util.spec_from_file_location('*', config.auto_encoder_config_path)
-        auto_config = importlib.util.module_from_spec(auto_spec)
-        auto_spec.loader.exec_module(auto_config)
-
-        auto_encoder = AutoEncoder(config=auto_config).cuda(device_id)
-        network.set_autoencoder(auto_encoder)
-    elif input_type == 'voxels':
-        network = AutoEncoder(config=config).cuda(device_id)
-    else:
-        raise Exception(f'Unknown input type {input_type}. ')
-
     network_state_dict = torch.load(network_path)
-    for key, item in list(network_state_dict.items()):
-        if key[:7] == 'module.':
-            network_state_dict[key[7:]] = item
-            del network_state_dict[key]
+    network_state_dict, is_old_style_weights = AutoEncoder.process_state_dict(network_state_dict, type = 1)
+    if is_old_style_weights:
+        # Old style weights (Image encoder) has wrong name for encoder type
+        config.encoder_type = 'Image'
+    
+    network = AutoEncoder(config=config).cuda(device_id)
     network.load_state_dict(network_state_dict)
     network.eval()
 
@@ -70,13 +57,10 @@ def extract_one_input(args):
             
             if not isinstance(input_data, list) or (isinstance(input_data, list) and len(input_data) == 1):
                 input_data = torch.from_numpy(input_data[0] if isinstance(input_data, list) else input_data).float().cuda(device_id)
-                input_data = input_data.unsqueeze(0)
-                result = generate_3d_mesh(
-                    network=network, embedding=None, input_type=input_type,
-                    store_file_path=store_file_path, 
-                    resolution=resolution, max_batch=max_batch,
-                    space_range=space_range, thershold=thershold,
-                    input_data=input_data,
+                result = network.save_bsp_deform(
+                    inputs=input_data, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
+                    space_range=space_range, thershold_1=thershold, embedding=None,
+                    return_voxel_and_values=True
                 )
             elif len(input_data) > 1 and aggregate_embedding:
                 embeddings_list = []
@@ -84,13 +68,13 @@ def extract_one_input(args):
                     input_data_single = torch.from_numpy(input_data_single).float().cuda(device_id)
                     input_data_single = input_data_single.unsqueeze(0)
                     embeddings_list.append(
-                        get_embedding(network, input_data_single, input_type)
+                        network(input_data_single)
                     )
                 embedding = torch.stack(embeddings_list).mean(dim=0) # TODO: mean or median?
-                result = generate_3d_mesh(
-                    network=network, embedding=embedding, input_type=input_type,
-                    store_file_path=store_file_path, resolution=resolution, max_batch=max_batch,
-                    space_range=space_range, thershold=thershold
+                result = network.save_bsp_deform(
+                    inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
+                    space_range=space_range, thershold_1=thershold, embedding=embedding,
+                    return_voxel_and_values=True
                 )
             else:
                 raise Exception('Unknown mode for network.')
@@ -116,12 +100,7 @@ def extract_one_input(args):
                 point_coord = np.reshape(sampled_points_normals[:,:3]+sampled_points_normals[:,3:]*1e-4, [1,-1,3])
                 point_coord = torch.from_numpy(point_coord).to(device_id)
 
-                if input_type == 'image':
-                    _, sample_points_value, _, _ = network.auto_encoder.decoder(embedding, point_coord)
-                elif input_type == 'voxels':
-                    _, sample_points_value, _, _ = network.decoder(embedding, point_coord)
-                else:
-                    raise Exception(f'Unknown input type {input_type}. ')
+                _, sample_points_value, _, _ = network.decoder(embedding, point_coord)
                     
                 sample_points_value = sample_points_value.detach().cpu().numpy()
                 # Take normals only for points which are inside object
@@ -130,39 +109,6 @@ def extract_one_input(args):
                 np.random.shuffle(sampled_points_normals)
                 # TODO: Is constraints with 4096 points needed here?
                 write_ply_point_normal(store_file_path[:-4] + '_normals.ply', sampled_points_normals[:4096])
-
-
-def get_embedding(network, input_data, input_type):
-    if input_type == 'image':
-        embedding = network.image_encoder(input_data)
-    elif input_type == 'voxels':
-        embedding = network.encoder(input_data)
-    else:
-        raise Exception(f'Unknown input type {input_type}. ')
-    return embedding
-
-
-def generate_3d_mesh(network, embedding, input_type, store_file_path, resolution, max_batch, space_range, thershold, input_data=None):
-    if embedding is None and input_data is not None:
-        embedding = get_embedding(network, input_data, input_type)
-    elif embedding is None and input_data is None:
-        raise Exception('Embedding is none for the network with no input data given.')
-
-    if input_type == 'image':
-        result = network.auto_encoder.save_bsp_deform(
-            inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
-            space_range=space_range, thershold_1=thershold, embedding=embedding,
-            return_voxel_and_values=True
-        )
-    elif input_type == 'voxels':
-        result = network.save_bsp_deform(
-            inputs=None, file_path=store_file_path, resolution=resolution, max_batch=max_batch,
-            space_range=space_range, thershold_1=thershold, embedding=embedding,
-            return_voxel_and_values=True
-        )
-    else:
-        raise Exception(f'Unknown input type {input_type}. ')
-    return result
 
 
 def split(a, n):

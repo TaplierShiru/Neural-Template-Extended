@@ -1,110 +1,95 @@
 
 import torch
 import torch.nn as nn
-import os
 import numpy as np
-import torch.nn.functional as F
 from models.encoder.dgcnn import DGCNN
 from models.encoder.cnn_3d import CNN3D, CNN3DDouble
-from models.encoder.image import ImageEncoder
+from models.encoder.image import ImageEncoder, ImageEncoderOriginal
 from models.decoder.flow import FlowDecoder
-from models.decoder.bsp import BSPDecoder
 from utils.ply_utils import triangulate_mesh_with_subdivide
 from typing import Union
-import mcubes
-import math
 from utils.other_utils import get_mesh_watertight, write_ply_polygon
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 
 
-
-class ImageAutoEncoder(nn.Module):
-    ## init
-    def __init__(self, config):
-        super().__init__()
-        self.config = config
-        self.image_encoder = ImageEncoder(config = self.config)
-        self.auto_encoder = None
-
-
-    def set_autoencoder(self, network):
-        self.auto_encoder = network
-
-class ImageAutoEncoderEndToEnd(nn.Module):
-    ## init
-    def __init__(self, config, auto_encoder_config):
-        super().__init__()
-        self.config = config
-        self.auto_encoder_config = auto_encoder_config
-        
-        self.image_encoder = ImageEncoder(config = self.config)
-
-        network_state_dict = torch.load(self.config.auto_encoder_resume_path)
-        network_state_dict = ImageAutoEncoderEndToEnd.process_state_dict(network_state_dict, type = 1)
-        self.auto_encoder = AutoEncoder(auto_encoder_config)
-        self.auto_encoder.load_state_dict(network_state_dict)
-        self.auto_encoder.train()
-
-        print(f"Reloaded the Auto encoder from {self.config.auto_encoder_resume_path}")
-
-    def forward(self, images, coordinates_inputs = None):
-        embedding = self.image_encoder(images)
-        if coordinates_inputs is None:
-            return embedding
-
-        outputs = self.auto_encoder.decoder(embedding, coordinates_inputs)
-        return outputs, embedding
-
+class AutoEncoder(nn.Module):
 
     @staticmethod
     def process_state_dict(network_state_dict, type = 0):
+        # if there is `module.` when it was saved with multi-gpu, clear it
+        for key, item in list(network_state_dict.items()):
+            # Saved with multi-gpu
+            if key.startswith('module.'):
+                network_state_dict[key[len('module.'):]] = item
+                del network_state_dict[key]
+        is_old_style_weights = False
+        # Old style weights, remap them to new one
+        if any([name_layer.startswith('image_encoder.') for name_layer in network_state_dict.keys()]):
+            is_old_style_weights = True
+            print('old style weights')
+            # Delete encoder of older model
+            for name_layer in list(network_state_dict.keys()):
+                if name_layer.startswith('encoder.') or name_layer.startswith('auto_encoder.encoder'):
+                    del network_state_dict[name_layer]
 
+            for key, item in list(network_state_dict.items()):
+                if key.startswith('image_encoder.'):
+                    # We should swap `image_encoder` to `encoder`
+                    new_key = 'encoder.' + key[len('image_encoder.'):]
+                    network_state_dict[new_key] = item
+                    del network_state_dict[key]
+                elif key.startswith('auto_encoder.decoder.'):
+                    # We should swap `image_encoder` to `encoder`
+                    new_key = 'decoder.' + key[len('auto_encoder.decoder.'):]
+                    network_state_dict[new_key] = item
+                    del network_state_dict[key]
+
+        # This option used in training, when we need to load previous saved model
+        # And append `module.` for multi-gpu
         if torch.cuda.device_count() >= 2 and type == 0:
+            print('multiple-gpues')
             for key, item in list(network_state_dict.items()):
                 if key[:7] != 'module.':
                     new_key = 'module.' + key
                     network_state_dict[new_key] = item
                     del network_state_dict[key]
-        else:
-            for key, item in list(network_state_dict.items()):
-                if key[:7] == 'module.':
-                    new_key = key[7:]
-                    network_state_dict[new_key] = item
-                    del network_state_dict[key]
 
-        return network_state_dict
+        return network_state_dict, is_old_style_weights
 
-
-
-
-class AutoEncoder(nn.Module):
     ## init
-    def __init__(self, config):
+    def __init__(self, config, encoder_config=None, decoder_config=None):
         super().__init__()
         self.config = config
-        if config.encoder_type == 'DGCNN':
-            self.encoder = DGCNN(config=config)
-        elif config.encoder_type == '3DCNN':
-            if hasattr(self.config, 'use_double_encoder') and self.config.use_double_encoder:
-                self.encoder = CNN3DDouble(config=config)
+        encoder_config = encoder_config if encoder_config is not None else config
+        if config.encoder_type.upper() == 'DGCNN':
+            self.encoder = DGCNN(config=encoder_config)
+        elif config.encoder_type.upper() == '3DCNN':
+            if hasattr(encoder_config, 'use_double_encoder') and encoder_config.use_double_encoder:
+                self.encoder = CNN3DDouble(config=encoder_config)
             else:
-                self.encoder = CNN3D(config=config)
-        elif config.encoder_type == 'Image':
-            self.encoder = ImageEncoder(config=config)
+                self.encoder = CNN3D(config=encoder_config)
+        elif config.encoder_type.upper() == 'IMAGE':
+            if hasattr(encoder_config, 'type_img_encoder') and encoder_config.type_img_encoder.lower() == 'ImageEncoder'.lower():
+                self.encoder = ImageEncoder(config=encoder_config)
+            else:
+                self.encoder = ImageEncoderOriginal(config=encoder_config)
         else:
             raise Exception("Encoder type not found!")
-
-        if config.decoder_type == 'Flow':
-            self.decoder = FlowDecoder(config=config)
+        
+        decoder_config = decoder_config if decoder_config is not None else config
+        if config.decoder_type.upper() == 'FLOW':
+            self.decoder = FlowDecoder(config=decoder_config)
         else:
             raise Exception("Decoder type not found!")
 
-    def forward(self, inputs, coordinates_inputs):
+    def forward(self, inputs, coordinates_inputs = None):
         embedding = self.encoder(inputs)
-        results = self.decoder(embedding, coordinates_inputs)
-        return results
+        if coordinates_inputs is None:
+            return embedding
 
+        outputs = self.decoder(embedding, coordinates_inputs)
+        return outputs, embedding
 
     def create_coordinates(self, resolution, space_range):
         dimensions_samples = np.linspace(space_range[0], space_range[1], resolution)
@@ -304,10 +289,6 @@ class AutoEncoder(nn.Module):
             vertices_result.append(undeformed_vertices)
         vertices_result = np.concatenate(vertices_result, axis=0)
         return vertices_result
-
-
-
-
 
 
 if __name__ == '__main__':
