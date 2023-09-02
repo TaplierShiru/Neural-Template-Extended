@@ -418,7 +418,7 @@ class ResNet34(nn.Module):
             self.use_bn = False
         elif type_block == ResNetBlockSMBN.__class__.__name__:
             resnet_block = ResNetBlockSMBN
-            self.use_bn = False
+            self.use_bn = True
         else:
             raise Exception(f'Unknown input type block {type_block}.')
 
