@@ -16,6 +16,16 @@ device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cp
 class AutoEncoder(nn.Module):
 
     @staticmethod
+    def fix_old_weights_config(config):
+        # Old style weights loaded for Image encoder (SVR)
+        # In config there are wrong parameters which will brake generation via Flow network
+        config.encoder_type = 'IMAGE'
+        config.bsp_phase = 1
+        config.flow_b = 0.0
+        config.bsp_surface_weight = 0.1
+        return config
+
+    @staticmethod
     def process_state_dict(network_state_dict, type = 0):
         # if there is `module.` when it was saved with multi-gpu, clear it
         for key, item in list(network_state_dict.items()):

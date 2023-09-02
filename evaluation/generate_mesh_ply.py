@@ -37,8 +37,7 @@ def extract_one_input(args):
     network_state_dict = torch.load(network_path)
     network_state_dict, is_old_style_weights = AutoEncoder.process_state_dict(network_state_dict, type = 1)
     if is_old_style_weights:
-        # Old style weights (Image encoder) has wrong name for encoder type
-        config.encoder_type = 'Image'
+        config = AutoEncoder.fix_old_weights_config(config)
     
     network = AutoEncoder(config=config).cuda(device_id)
     network.load_state_dict(network_state_dict)
