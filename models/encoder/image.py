@@ -92,25 +92,24 @@ class ResNetBlock(nn.Module):
         self.dim_out = dim_out
         self.negative_slope = negative_slope
         if self.dim_in == self.dim_out:
-            self.conv_1 = nn.Conv2d(self.dim_in, self.bottleneck_f, 1, stride=1, padding=1, bias=False)
+            self.conv_1 = nn.Conv2d(self.dim_in, self.bottleneck_f, 1, stride=1, padding=0, bias=False)
             self.conv_2 = nn.Conv2d(self.bottleneck_f, self.bottleneck_f, 3, stride=1, padding=1, bias=False)
-            self.conv_3 = nn.Conv2d(self.bottleneck_f, self.dim_out, 1, stride=1, padding=1, bias=False)
-            nn.init.xavier_uniform_(self.conv_1.weight)
-            nn.init.xavier_uniform_(self.conv_2.weight)
-            nn.init.xavier_uniform_(self.conv_3.weight)
+            self.conv_3 = nn.Conv2d(self.bottleneck_f, self.dim_out, 1, stride=1, padding=0, bias=False)
         else:
             stride = 2 if not expand_dims_without_stride else 1
-            self.conv_1 = nn.Conv2d(self.dim_in, self.bottleneck_f, 1, stride=stride, padding=1, bias=False)
+            self.conv_1 = nn.Conv2d(self.dim_in, self.bottleneck_f, 1, stride=stride, padding=0, bias=False)
             self.conv_2 = nn.Conv2d(self.bottleneck_f, self.bottleneck_f, 3, stride=1, padding=1, bias=False)
-            self.conv_3 = nn.Conv2d(self.bottleneck_f, self.dim_out, 1, stride=1, padding=1, bias=False)
+            self.conv_3 = nn.Conv2d(self.bottleneck_f, self.dim_out, 1, stride=1, padding=0, bias=False)
             self.conv_s = nn.Conv2d(self.dim_in, self.dim_out, 1, stride=stride, padding=0, bias=False)
             nn.init.xavier_uniform_(self.conv_s.weight)
-        nn.init.xavier_uniform_(self.conv_1.weight)
-        nn.init.xavier_uniform_(self.conv_2.weight)
-        nn.init.xavier_uniform_(self.conv_3.weight)
+
         self.bn1 = nn.BatchNorm2d(self.dim_in)
         self.bn2 = nn.BatchNorm2d(self.bottleneck_f)
         self.bn3 = nn.BatchNorm2d(self.bottleneck_f)
+        nn.init.xavier_uniform_(self.conv_1.weight)
+        nn.init.xavier_uniform_(self.conv_2.weight)
+        nn.init.xavier_uniform_(self.conv_3.weight)
+
 
     def forward(self, input):
         if self.dim_in == self.dim_out:
@@ -299,9 +298,9 @@ class ImageEncoder(nn.Module):
         self.final_act_func = config.img_final_act_func if hasattr(config, 'img_final_act_func') else torch.sigmoid
         if hasattr(config, 'img_linear_use_bn') and config.img_linear_use_bn:
             self.linear_use_bn = True
-            self.bn1 = nn.BatchNorm2d(self.model.final_out_f)
-            self.bn2 = nn.BatchNorm2d(self.model.final_out_f)
-            self.bn3 = nn.BatchNorm2d(self.model.final_out_f)
+            self.bn1 = nn.BatchNorm1d(self.model.final_out_f)
+            self.bn2 = nn.BatchNorm1d(self.model.final_out_f)
+            self.bn3 = nn.BatchNorm1d(self.model.final_out_f)
         else:
             self.linear_use_bn = False
         nn.init.xavier_uniform_(self.linear_1.weight)
@@ -362,7 +361,7 @@ class ResNet18(nn.Module):
             # Scale (weight) should be turned off. Only `bias` is needed at the start
             # Notice that `weight` - is a scale, there is also `bias` which will be trained
             self.bn_initial.weight.requires_grad = False
-            self.bn0 = nn.BatchNorm2d(base_f)
+            self.bn0 = nn.BatchNorm2d(base_f // 2)
 
         self.conv_0 = nn.Conv2d(in_f, base_f // 2, 7, stride=2, padding=3, bias=False)
 
@@ -427,7 +426,7 @@ class ResNet34(nn.Module):
             # Scale (weight) should be turned off. Only `bias` is needed at the start
             # Notice that `weight` - is a scale, there is also `bias` which will be trained
             self.bn_initial.weight.requires_grad = False
-            self.bn0 = nn.BatchNorm2d(base_f)
+            self.bn0 = nn.BatchNorm2d(base_f // 2)
         
         self.conv_0 = nn.Conv2d(in_f, base_f // 2, 7, stride=2, padding=3, bias=False)
         
@@ -501,7 +500,7 @@ class ResNet50(nn.Module):
             ResNetBlock(base_f * 4, base_f * 4),
         )
         self.resnet_block_2 = nn.Sequential(
-            ResNetBlock(base_f, base_f * 8),
+            ResNetBlock(base_f * 4, base_f * 8),
             ResNetBlock(base_f * 8, base_f * 8),
             ResNetBlock(base_f * 8, base_f * 8),
         )
