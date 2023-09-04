@@ -53,7 +53,7 @@ def extract_one_input(args):
             if os.path.exists(store_file_path[:-4] + '_deformed.ply'):
                 print(f"{store_file_path} exists!")
                 continue
-            
+
             if not isinstance(input_data, list) or (isinstance(input_data, list) and len(input_data) == 1):
                 input_data = torch.from_numpy(input_data[0] if isinstance(input_data, list) else input_data).float().cuda(device_id)
                 result = network.save_bsp_deform(
@@ -151,13 +151,21 @@ def main(args):
         print('Also generate normal points for each final obj')
     
     if args.aggregate_embedding:
-        if args.num_input_data_aggregation == None:
-            print('Aggregation is True, but number of data is missing. Skip aggregation.')
-        else:
+        if args.num_input_data_aggregation is None and args.view_use_indx_args is None:
+            print('Aggregation is True, but `num_input_data_aggregation` and `view_use_indx_args` are missing. Skip aggregation.')
+        elif args.view_use_indx_args is not None:
+            print(f'Aggregate input embedding by {args.view_use_indx_args} indx views')
+        elif args.num_input_data_aggregation is not None:
             print(f'Aggregate input embedding by {args.num_input_data_aggregation if args.num_input_data_aggregation != -1 else samples.view_num} samples')
         
         if args.input_type != 'image':
             raise Exception('Aggregation supported only by images!')
+    elif args.aggregate_embedding is None and args.view_use_indx_args is not None:
+        print(f'Aggregation parameters is not given, but `num_input_data_aggregation` is equal to {args.view_use_indx_args}. '
+              'NOTICE! Aggregation will be not used. ')
+    elif args.aggregate_embedding is None and args.num_input_data_aggregation is not None:
+        print(f'Aggregation parameters is not given, but `args.num_input_data_aggregation` is equal to {args.num_input_data_aggregation}. '
+              'NOTICE! Aggregation will be not used. ')
 
     def get_input_data(samples, i, num_input_data_aggregation, aggregate_embedding, view_use_indx_list):
         if aggregate_embedding:
@@ -169,7 +177,7 @@ def main(args):
                 return [samples[i][0][0] for _ in range(num_input_data_aggregation)]
             gathered_data_list = []
             for indx_view in indx_view_iterator:
-                samples.image_idx = indx_view
+                samples.image_idx = int(indx_view)
                 gathered_data_list.append(
                     samples[i][0][0]
                 )
@@ -178,7 +186,6 @@ def main(args):
             return gathered_data_list
         
         return samples[i][0][0]
-
     generate_args = [
         (
             get_input_data(samples, i, args.num_input_data_aggregation, args.aggregate_embedding, args.view_use_indx_args), 
@@ -231,7 +238,7 @@ if __name__ == '__main__':
     parser.add_argument('--aggregate-embedding', action='store_true',
                         help='If provided when embedding will be aggregated using several number of inputs equal to number in `num-input-data-aggregation`. ')
     parser.add_argument('--num-input-data-aggregation', type=int, default=None,
-                        help='Number of input data for aggregation of embedding vectors. '
+                        help='Number of input data (random data, for certain indx of the view use `view-use-indx-args`) for aggregation of embedding vectors. '
                         'By default equal to None, i.e. will be not used, if equal to -1 when will be used all views.')
     parser.add_argument('--view-use-indx-args', nargs='*', default=None,
                         help='If input data is `image` and `aggregate-embedding` is used, '
