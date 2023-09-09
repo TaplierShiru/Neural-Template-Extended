@@ -70,6 +70,8 @@ class ImageTrainer(object):
 
         ### set up network
         network = AutoEncoder(self.config)
+        # Preload decoder weights to proper save later, or usage in some cases
+        network.decoder.load_state_dict(voxel_auto_encoder.decoder.state_dict())
         for param in network.decoder.parameters():
             param.requires_grad = False
         if torch.cuda.is_available() and torch.cuda.device_count() > 1:
