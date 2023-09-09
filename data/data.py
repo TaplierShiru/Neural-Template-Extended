@@ -247,6 +247,7 @@ class ImNetAllDataSamples(torch.utils.data.Dataset):
                  data_path: str,
                  interval=1,
                  auto_encoder=None,
+                 auto_encoder_device=None,
                  max_batch=32,
                  image_idx=None,
                  sample_voxel_size: int = 64,
@@ -284,7 +285,10 @@ class ImNetAllDataSamples(torch.utils.data.Dataset):
 
         ### extract the latent vector
         if auto_encoder is not None:
-            self.extract_latent_vector(data_voxels = self.data_voxels, auto_encoder = auto_encoder, max_batch = max_batch)
+            self.extract_latent_vector(
+                data_voxels = self.data_voxels, auto_encoder = auto_encoder, 
+                max_batch = max_batch, auto_encoder_device = auto_encoder_device
+            )
 
         ### pixels
         self.crop_size = 128
@@ -408,14 +412,17 @@ class ImNetAllDataSamples(torch.utils.data.Dataset):
 
         return processed_inputs, idx
 
-    def extract_latent_vector(self, data_voxels,  auto_encoder, max_batch):
+    def extract_latent_vector(self, data_voxels,  auto_encoder, max_batch, auto_encoder_device):
+        if auto_encoder_device is None:
+            auto_encoder_device = device
+        auto_encoder.eval() # TODO: It should be eval, right?
         num_batch = int(np.ceil(data_voxels.shape[0] / max_batch))
 
         results = []
         with tqdm(range(num_batch), unit='batch') as tlist:
             for i in tlist:
                 batched_voxels = data_voxels[i*max_batch:(i+1)*max_batch].astype(np.float32)
-                batched_voxels = torch.from_numpy(batched_voxels).float().to(device)
+                batched_voxels = torch.from_numpy(batched_voxels).float().to(auto_encoder_device)
 
                 latent_vectors = auto_encoder.encoder(batched_voxels).detach().cpu().numpy()
                 results.append(latent_vectors)

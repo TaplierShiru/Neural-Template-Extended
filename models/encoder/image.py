@@ -412,10 +412,10 @@ class ResNet34(nn.Module):
         self.out_f = out_f
         self.final_out_f = base_f * 8
 
-        if type_block == ResNetBlockSM.__class__.__name__:
+        if type_block == ResNetBlockSM.__name__:
             resnet_block = ResNetBlockSM
             self.use_bn = False
-        elif type_block == ResNetBlockSMBN.__class__.__name__:
+        elif type_block == ResNetBlockSMBN.__name__:
             resnet_block = ResNetBlockSMBN
             self.use_bn = True
         else:

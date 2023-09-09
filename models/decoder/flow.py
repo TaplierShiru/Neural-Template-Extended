@@ -126,7 +126,7 @@ class FlowDecoder(torch.nn.Module):
         bias = self.config.flow_b if hasattr(self.config, 'flow_b') else 0.0
         bias = np.random.uniform(-bias, bias)
 
-        intergration_times = torch.tensor([torch.tensor(start).to(device), torch.tensor(end).to(device)], requires_grad=True).to(device)
+        intergration_times = torch.tensor([torch.tensor(start).to(embedding.device), torch.tensor(end).to(embedding.device)], requires_grad=True).to(embedding.device)
 
         states = coordinates, expanded_embeding
 
@@ -181,12 +181,12 @@ class FlowDecoder(torch.nn.Module):
         if terminate_time is None:
             if self.trainable_T:
                 intergration_times = torch.stack(
-                    [torch.tensor(0.0).to(device), self.sqrt_end_time * self.sqrt_end_time + bias]).to(device)
+                    [torch.tensor(0.0).to(embedding.device), self.sqrt_end_time * self.sqrt_end_time + bias]).to(embedding.device)
             else:
-                intergration_times = torch.tensor([torch.tensor(0.0).to(device), self.T + bias], requires_grad=True).to(
-                    device)
+                intergration_times = torch.tensor([torch.tensor(0.0).to(embedding.device), self.T + bias], requires_grad=True).to(
+                    embedding.device)
         else:
-            intergration_times = torch.tensor([torch.tensor(0.0).to(device), terminate_time], requires_grad=True).to(device)
+            intergration_times = torch.tensor([torch.tensor(0.0).to(embedding.device), terminate_time], requires_grad=True).to(embedding.device)
 
         states = coordinates, expanded_embeding
 
@@ -238,11 +238,11 @@ class FlowDecoder(torch.nn.Module):
         if terminate_time is None:
             if self.trainable_T:
                 intergration_times = torch.stack(
-                    [self.sqrt_end_time * self.sqrt_end_time, torch.tensor(0.0).to(device), ]).to(device)
+                    [self.sqrt_end_time * self.sqrt_end_time, torch.tensor(0.0).to(embedding.device), ]).to(embedding.device)
             else:
-                intergration_times = torch.tensor([self.T, torch.tensor(0.0).to(device)], requires_grad=True).to(device)
+                intergration_times = torch.tensor([self.T, torch.tensor(0.0).to(embedding.device)], requires_grad=True).to(embedding.device)
         else:
-            intergration_times = torch.tensor([self.T, self.T * terminate_time], requires_grad=True).to(device)
+            intergration_times = torch.tensor([self.T, self.T * terminate_time], requires_grad=True).to(embedding.device)
 
         states = coordinates, expanded_embeding
 

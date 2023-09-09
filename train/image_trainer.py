@@ -44,11 +44,6 @@ class ImageTrainer(object):
         voxel_auto_encoder.load_state_dict(network_state_dict)
         voxel_auto_encoder.to(device)
         print(f"Reloaded the Auto encoder from {self.config.auto_encoder_resume_path}")
-        
-        network = AutoEncoder(self.config)
-        network = network.to(device)
-
-        self.config.auto_encoder_resume_path = None
 
         ### create dataset
         train_samples = ImNetImageSamples(data_path=self.config.data_path,
@@ -74,13 +69,17 @@ class ImageTrainer(object):
                                           drop_last=False)
 
         ### set up network
+        network = AutoEncoder(self.config)
+        for param in network.decoder.parameters():
+            param.requires_grad = False
         if torch.cuda.is_available() and torch.cuda.device_count() > 1:
             print(f"Use {torch.cuda.device_count()} GPUS!")
             network = nn.DataParallel(network)
-
         network = network.to(device)
         
         loss_fn = torch.nn.MSELoss()
+
+        self.config.auto_encoder_resume_path = None
 
         ## reload the network if needed
         if self.config.network_resume_path is not None:
