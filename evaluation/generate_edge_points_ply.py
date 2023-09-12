@@ -57,7 +57,10 @@ def write_edges_points_to_ply(args):
         os.makedirs(save_folder, exist_ok=True)
         write_ply_point_normal(
             save_path, 
-            points_on_edges[:4096]
+            # In the original code, number of saved points lower\equal to 4096 (aka slice [:4096]) - but why? IDK
+            # In our case (Template model) this constraint is harm to final evaluation
+            # In case BSP-NET, it generate much lower number of points, so we dont bother about it
+            points_on_edges
         )
     except:
         traceback.print_exc()

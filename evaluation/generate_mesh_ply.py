@@ -106,8 +106,10 @@ def extract_one_input(args):
                 sampled_points_normals = sampled_points_normals[sample_points_value[0,:,0]>1e-4]
 
                 np.random.shuffle(sampled_points_normals)
-                # TODO: Is constraints with 4096 points needed here?
-                write_ply_point_normal(store_file_path[:-4] + '_normals.ply', sampled_points_normals[:4096])
+                # In the original code, number of saved points lower\equal to 4096 (aka slice [:4096]) - but why? IDK
+                # In our case (Template model) this constraint is harm to final evaluation
+                # In case BSP-NET, it generate much lower number of points, so we dont bother about it
+                write_ply_point_normal(store_file_path[:-4] + '_normals.ply', sampled_points_normals)
 
 
 def split(a, n):
