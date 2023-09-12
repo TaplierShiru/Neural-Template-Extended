@@ -86,10 +86,12 @@ class ImageTrainer(object):
                                           num_workers=config.data_worker,
                                           shuffle=False,
                                           drop_last=False)
-        # Remove it, not needed anymore
-        del voxel_auto_encoder
         ### set up network
         network = AutoEncoder(self.config)
+        # Preload decoder weights to proper save later, or usage in some cases
+        network.decoder.load_state_dict(voxel_auto_encoder.decoder.state_dict())
+        # Remove it, not needed anymore
+        del voxel_auto_encoder
         # Decoder parameters are not trained, only encoder one
         # If not disable them from training, when error from DDP will be raised
         for param in network.decoder.parameters():
