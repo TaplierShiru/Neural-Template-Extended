@@ -1,9 +1,9 @@
 import traceback
-from typing import List
-import os
 import argparse
+import math
 
 import trimesh
+from trimesh import transformations
 from lfd import LightFieldDistance
 
 
@@ -27,7 +27,7 @@ def as_mesh(scene_or_mesh):
     return mesh
 
 
-def calculate_single_ldf_metric(single_gt_filepath: str, single_pd_filepath: str, save_file: str):
+def calculate_single_ldf_metric(single_gt_filepath: str, single_pd_filepath: str, save_file: str, dataset_version: str):
     try:
         gt_mesh_ply: trimesh.Trimesh = as_mesh(
             trimesh.load(single_gt_filepath, file_type='obj', process=False, maintain_order=True, validate=False)
@@ -35,6 +35,14 @@ def calculate_single_ldf_metric(single_gt_filepath: str, single_pd_filepath: str
         pd_mesh_ply: trimesh.Trimesh = as_mesh(
             trimesh.load(single_pd_filepath, file_type='ply', process=False, maintain_order=True, validate=False)
         )
+        if dataset_version == 1:
+            angle = -math.pi / 2 # -90 degrees
+            dir_yaxis = [0, 1, 0]
+            center = [0, 0, 0]
+            
+            rot_matrix = transformations.rotation_matrix(angle, dir_yaxis, center)
+            pd_mesh_ply.apply_transform(rot_matrix)
+        
         lfd_value: float = LightFieldDistance(verbose=True).get_distance(
             gt_mesh_ply, pd_mesh_ply
         )
@@ -56,6 +64,10 @@ if __name__ == '__main__':
                         help='Path to predicted truth ply file.')
     parser.add_argument('--save-file', type=str, 
                         help='File path to write result.')
+    parser.add_argument('-v', '--dataset-version', choices=[1, 2], type=int, default=1, 
+                        help='Version of the input dataset. For version 1, rotation between generated and target object could be different. '
+                       'In this repo, generated obj is align with version 2. To align with version 1 rotation by -90 for axis y must be done. '
+                       'For any other stuff manual change required. ')
     args = parser.parse_args()
-    calculate_single_ldf_metric(args.single_gt_filepath, args.single_pd_filepath, args.save_file)
+    calculate_single_ldf_metric(args.single_gt_filepath, args.single_pd_filepath, args.save_file, args.dataset_version)
     

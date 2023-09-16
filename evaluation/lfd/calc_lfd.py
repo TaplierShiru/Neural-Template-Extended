@@ -79,27 +79,7 @@ def stdout_redirected(to=os.devnull):
                                             # CLOEXEC may be different
 
 
-def as_mesh(scene_or_mesh):
-    """
-    Convert a possible scene to a mesh.
-
-    If conversion occurs, the returned mesh has only vertex and face data.
-    """
-    if isinstance(scene_or_mesh, trimesh.Scene):
-        if len(scene_or_mesh.geometry) == 0:
-            mesh = None  # empty scene
-        else:
-            # we lose texture information here
-            mesh = trimesh.util.concatenate(
-                tuple(trimesh.Trimesh(vertices=g.vertices, faces=g.faces)
-                    for g in scene_or_mesh.geometry.values()))
-    else:
-        assert(isinstance(scene_or_mesh, trimesh.Trimesh))
-        mesh = scene_or_mesh
-    return mesh
-
-
-def calculate_ldf_metric(args_files_path_list: List[StoredPathData], start_indx: int, end_indx: int, indx_process: int):
+def calculate_ldf_metric(args_files_path_list: List[StoredPathData], start_indx: int, end_indx: int, indx_process: int, dataset_version: str):
     for (files_info, indx) in zip(args_files_path_list, range(start_indx, end_indx)):
         if (indx - start_indx) % 30:
             print(f'{indx_process} done {indx - start_indx}/{end_indx - start_indx}')
@@ -113,7 +93,7 @@ def calculate_ldf_metric(args_files_path_list: List[StoredPathData], start_indx:
                 subprocess.run(
                     f'Xvfb :{indx_process} -screen 0 1900x1080x24+32 & export DISPLAY=:{indx_process} && python3 calc_single_ldf.py ' +\
                         f'--single-gt-filepath {files_info.gt_ply_filepath} --single-pd-filepath {files_info.pd_ply_filepath} ' +\
-                        f'--save-file {files_info.save_res_file}', 
+                        f'--save-file {files_info.save_res_file} -v {dataset_version}', 
                     shell=True
                 )
         except Exception as e:
@@ -172,7 +152,7 @@ def main(args):
         )
         
         workers = [
-            Process(target=calculate_ldf_metric, args = (args_files_path_list, start_indx, end_indx, indx)) 
+            Process(target=calculate_ldf_metric, args = (args_files_path_list, start_indx, end_indx, indx, args.dataset_version)) 
             for indx, (args_files_path_list, start_indx, end_indx) in enumerate(args_to_generate_dataset_per_process)
         ]
 
@@ -207,8 +187,10 @@ if __name__ == '__main__':
                         help='Path to folder with original obj files from ShapeNet.')
     parser.add_argument('-s', '--save-folder', type=str,
                         help='Path to save calculated ldf for each model.')
-    parser.add_argument('-d', '--dataset-version', choices=[1, 2], 
-                        help='Choose version of ShapeNet dataset.', default=1)
+    parser.add_argument('-v', '--dataset-version', choices=[1, 2], type=int, default=1, 
+                        help='Version of the input dataset. For version 1, rotation between generated and target object could be different. '
+                       'In this repo, generated obj is align with version 2. To align with version 1 rotation by -90 for axis y must be done. '
+                       'For any other stuff manual change required. ')
     parser.add_argument('-n', '--num-process', type=int, 
                         help='Number of process.', default=4)
     args = parser.parse_args()
