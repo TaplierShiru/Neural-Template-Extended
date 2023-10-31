@@ -174,6 +174,7 @@ class ImageEncoderOriginal(nn.Module):
         
         if hasattr(config, 'use_depth') and config.use_depth:
             in_f += 1
+        self.invert_input = config.image_invert_input if hasattr(config, 'image_invert_input') else True 
         self.in_f = in_f
 
         self.conv_0 = nn.Conv2d(self.in_f, self.img_ef_dim, 7, stride=2, padding=3, bias=False)
@@ -206,7 +207,7 @@ class ImageEncoderOriginal(nn.Module):
         nn.init.constant_(self.linear_4.bias, 0)
 
     def forward(self, view):
-        layer_0 = self.conv_0(1 - view)
+        layer_0 = self.conv_0(1 - view if self.invert_input else view)
         layer_0 = F.leaky_relu(layer_0, negative_slope=0.01, inplace=True)
 
         layer_1 = self.res_1(layer_0)
@@ -268,6 +269,7 @@ class ImageEncoder(nn.Module):
         if hasattr(config, 'use_depth') and config.use_depth:
             in_f += 1
         self.in_f = in_f
+        self.invert_input = config.image_invert_input if hasattr(config, 'image_invert_input') else True 
 
         if hasattr(config, 'img_arch_type'):
             if config.img_arch_type.lower() == 'resnet18':
@@ -313,7 +315,7 @@ class ImageEncoder(nn.Module):
         nn.init.constant_(self.linear_4.bias, 0)
 
     def forward(self, view):
-        output = self.model(1 - view)
+        output = self.model(1 - view if self.invert_input else view)
         b, _, _, _ = output.shape
         output = output.view(b, self.model.final_out_f)
         output = F.leaky_relu(output, negative_slope=0.2, inplace=True)
