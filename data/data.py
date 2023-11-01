@@ -149,10 +149,18 @@ class ImNetImageSamples(torch.utils.data.Dataset):
             depth = self.data_depths[idx, view_index].astype(np.float32)
             depth_background_mask = depth > 1_000
             depth_object_mask = ~depth_background_mask
-            depth_object_values = depth[depth_object_mask]
-            depth[depth_object_mask] = (depth[depth_object_mask] - depth_object_values.mean()) / (depth_object_values.std() + 1e-8)
-            depth[depth_background_mask] = depth[depth_object_mask].max()
-            depth = -depth # Invert it, to be from positive (close to camera) to negative (far away)
+            # There are some cases, when object mask could be empty
+            # Some broken objects or bad views are could present in the dataset
+            if np.any(depth_object_mask):
+                depth_object_values = depth[depth_object_mask]
+                depth[depth_object_mask] = (depth_object_values - depth_object_values.mean()) / (depth_object_values.std() + 1e-8)
+                # Background must be far away, so its just max value of the depth
+                # TODO: Is it best way to handle that?
+                depth[depth_background_mask] = depth[depth_object_mask].max()
+                depth = -depth # Invert it, to be from positive (close to camera) to negative (far away)
+            else:
+                # If object is not presented, when give just depth with zeros
+                depth[...] = 0.0
             image = np.concatenate([image, depth], axis=0)
 
         if hasattr(self, 'latent_vectors'):
@@ -179,7 +187,7 @@ class ImNetImageSamples(torch.utils.data.Dataset):
         with tqdm(range(num_batch), unit='batch') as tlist:
             for i in tlist:
                 batched_voxels = data_voxels[i*max_batch:(i+1)*max_batch].astype(np.float32)
-                batched_voxels = torch.from_numpy(batched_voxels).float().to(device)
+                batched_voxels = torch.from_numpy(batched_voxels).float().to(auto_encoder_device)
 
                 latent_vectors = auto_encoder.encoder(batched_voxels).detach().cpu().numpy()
                 results.append(latent_vectors)
@@ -254,9 +262,6 @@ class ImNetSamples(torch.utils.data.Dataset):
 class ImNetAllDataSamples(ImNetImageSamples):
 
     def __getitem__(self, idx):
-
-        idx = idx * self.interval
-
         # Image (concat with depth if presented), latent vector, obj class (if presetned)
         processed_inputs, idx = super().__getitem__(idx)
 

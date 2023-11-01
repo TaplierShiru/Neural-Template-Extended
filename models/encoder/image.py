@@ -172,9 +172,13 @@ class ImageEncoderOriginal(nn.Module):
         else:
             in_f = 1
         
-        if hasattr(config, 'use_depth') and config.use_depth:
-            in_f += 1
         self.invert_input = config.image_invert_input if hasattr(config, 'image_invert_input') else True 
+
+        if hasattr(config, 'use_depth') and config.use_depth:
+            if self.invert_input:
+                print('Invert input option is True, but use depth also True. It could lead to worse or unexpected reuslts')
+            in_f += 1
+            
         self.in_f = in_f
 
         self.conv_0 = nn.Conv2d(self.in_f, self.img_ef_dim, 7, stride=2, padding=3, bias=False)
@@ -266,10 +270,13 @@ class ImageEncoder(nn.Module):
         else:
             in_f = 1
         
+        self.invert_input = config.image_invert_input if hasattr(config, 'image_invert_input') else True 
+
         if hasattr(config, 'use_depth') and config.use_depth:
+            if self.invert_input:
+                print('Invert input option is True, but use depth also True. It could lead to worse or unexpected reuslts')
             in_f += 1
         self.in_f = in_f
-        self.invert_input = config.image_invert_input if hasattr(config, 'image_invert_input') else True 
 
         if hasattr(config, 'img_arch_type'):
             if config.img_arch_type.lower() == 'resnet18':
