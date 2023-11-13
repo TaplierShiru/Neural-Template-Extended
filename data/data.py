@@ -62,17 +62,16 @@ class ImNetImageSamples(torch.utils.data.Dataset):
         self.crop_size = 128
         # 24 137 1
         if len(data_dict['pixels'].shape) == 5:
-            _, self.view_num, self.view_size, _, image_color_size = data_dict['pixels'].shape
+            _, self.view_num, self.view_size, _, image_color_stored_size = data_dict['pixels'].shape
         else:
             _, self.view_num, self.view_size, _ = data_dict['pixels'].shape
-            image_color_size = 1
-        image_color_size_min = min(image_preferred_color_space, image_color_size)
-        if image_preferred_color_space != image_color_size:
+            image_color_stored_size = 1
+        image_color_size = min(image_preferred_color_space, image_color_stored_size)
+        if image_preferred_color_space != image_color_stored_size:
             print(
-                f'Preferred color space is {image_preferred_color_space} but loaded are {image_color_size}. '
-                f'Preferred or minimum value {image_color_size_min} will be used as more prioritized option.'
+                f'Preferred color space is {image_preferred_color_space} but loaded are {image_color_stored_size}. '
+                f'Preferred or minimum value {image_color_size} will be used as more prioritized option.'
             )
-        image_color_size = image_color_size_min
 
         self.crop_edge = self.view_size - self.crop_size
         if self.crop_edge < 0:
