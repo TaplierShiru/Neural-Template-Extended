@@ -12,12 +12,6 @@ output_channels = 256
 
 ## setting for image encoder
 img_ef_dim = 64
-# TODO: Handle parameters for new image encoder. Possibility to run old and new image-encoder
-# type_img_encoder ImageEncoder ImageEncoderOriginal
-# img_arch_type resnet18 resnet34 resnet50
-# img_final_act_func torch.sigmoid torch.tanh None
-# type_block ResNetBlockSM ResNetBlockSMBN # affect only ResNeT18 and ResNet34
-# img_linear_use_bn True False
 
 #### setting for decoder
 decoder_input_embbeding_size = 128
@@ -53,7 +47,7 @@ bsp_thershold = 0.01
 #### Training
 data_worker = 0
 coordinate_max_len = 500000
-encoder_type = 'IMAGE' # Originally here 3DCNN, but I change code to readable state, so here now Image
+encoder_type = '3DCNN'
 decoder_type = 'Flow'
 network_type = 'AutoEncoder'
 lr = 5e-5
@@ -63,13 +57,14 @@ network_resume_path = None
 optimizer_resume_path = None
 data_type = 'IMNET'
 data_folder = 'home'
-data_path = r'./data/all_vox256_img/all_vox256_img_train.hdf5'
+data_path = r'/path/to/datasets/shapenet/prepared_v2/test_nt_v2/dataset_train.hdf5'
+data_test_path = r'/path/to/datasets/shapenet/prepared_v2/test_nt_v2/dataset_test.hdf5'
 sample_voxel_size = 16
 load_ram = False
 batch_size = 32
 loss_fn = nn.MSELoss() # nn.MSELoss
-training_epochs = 1000
-saving_intervals = 100
+training_epochs = 300
+saving_intervals = 5
 exp_idx = 200
 starting_epoch = 0
 starting_phase = 0
@@ -77,5 +72,5 @@ special_symbol = ''
 half_batch_size_when_phase_2 = False
 use_testing = False
 testing_interval = 1
-auto_encoder_config_path = r'<path_to_discrete_phase_folder>/config.py'
-auto_encoder_resume_path = r'<path_to_discrete_phase_folder>/<saved_model>.pth'
+auto_encoder_config_path = None
+auto_encoder_resume_path = None

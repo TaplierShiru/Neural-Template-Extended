@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
 import os
@@ -16,7 +17,7 @@ except ModuleNotFoundError:
     # Try again
     from models.network import AutoEncoder
 
-from data.data import ImNetImageSamples
+from data.data import ImNetAllDataSamples
 from torch.utils.data import DataLoader
 from utils.debugger import MyDebugger
 
@@ -36,7 +37,6 @@ class ImageTrainer(object):
                   'Change encoder type to Image'
             )
             self.config.encoder_type = 'IMAGE'
-        
         ### Network
         network_state_dict = torch.load(self.config.auto_encoder_resume_path)
         network_state_dict, _ = AutoEncoder.process_state_dict(network_state_dict, type = 1)
@@ -46,7 +46,7 @@ class ImageTrainer(object):
         print(f"Reloaded the Auto encoder from {self.config.auto_encoder_resume_path}")
 
         ### create dataset
-        train_samples = ImNetImageSamples(data_path=self.config.data_path,
+        train_samples = ImNetAllDataSamples(data_path=self.config.data_path,
                                           auto_encoder = voxel_auto_encoder,
                                           sample_class=hasattr(config, 'sample_class') and config.sample_class,
                                           use_depth=hasattr(config, 'use_depth') and config.use_depth,
@@ -59,7 +59,7 @@ class ImageTrainer(object):
                                        drop_last=False)
 
         if hasattr(self.config, 'use_testing') and self.config.use_testing:
-            test_samples = ImNetImageSamples(data_path=self.config.data_path[:-10] + 'test.hdf5',
+            test_samples = ImNetAllDataSamples(data_path=self.config.data_path[:-10] + 'test.hdf5',
                                         auto_encoder=voxel_auto_encoder,
                                         sample_class=hasattr(config, 'sample_class') and config.sample_class)
             test_data_loader = DataLoader(dataset=test_samples,
@@ -81,7 +81,6 @@ class ImageTrainer(object):
             print(f"Use {torch.cuda.device_count()} GPUS!")
             network = nn.DataParallel(network)
         network = network.to(device)
-        
         loss_fn = torch.nn.MSELoss()
 
         self.config.auto_encoder_resume_path = None
@@ -116,7 +115,11 @@ class ImageTrainer(object):
                 losses = []
 
                 is_training = True
-                losses = self.evaluate_one_epoch(is_training, loss_fn, losses, network, optimizer, tepoch)
+                losses = self.evaluate_one_epoch(
+                    is_training, loss_fn, losses, 
+                    network, optimizer, tepoch, 
+                    use_additional_losses=idx >= self.config.use_additional_losses_after_epochs
+                )
                 print(f"Train Loss for epoch {idx} : {np.mean(losses)}")
 
                 if idx % self.config.saving_intervals == 0:
@@ -137,19 +140,22 @@ class ImageTrainer(object):
                             print(f"Test Loss for epoch {idx} : {np.mean(losses)}")
 
 
-    def evaluate_one_epoch(self, is_training, loss_fn, losses, network, optimizer, tepoch):
+    def evaluate_one_epoch(self, is_training, loss_fn, losses, network, optimizer, tepoch, use_additional_losses):
         ###
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         ###
         for inputs, samples_indices in tepoch:
             if hasattr(config, 'sample_class') and self.config.sample_class:
-                input_images, latent_vector_gt, class_ground_truth = inputs
+                voxels_inputs, coordinate_inputs, occupancy_ground_truth, input_images, latent_vector_gt, class_ground_truth = inputs
                 # Keep class info for eval and future loss updates
                 class_ground_truth = class_ground_truth.to(device)
             else:
-                input_images, latent_vector_gt = inputs
+                voxels_inputs, coordinate_inputs, occupancy_ground_truth, input_images, latent_vector_gt = inputs
             input_images, latent_vector_gt = input_images.to(device), latent_vector_gt.to(device)
+            voxels_inputs, coordinate_inputs, occupancy_ground_truth = voxels_inputs.to(
+                device), coordinate_inputs.to(device), occupancy_ground_truth.to(
+                device)
 
             if is_training:
                 network.train()
@@ -157,10 +163,58 @@ class ImageTrainer(object):
             else:
                 network.eval()
 
-            pred_latent_vector = network(input_images)
-            loss = loss_fn(pred_latent_vector, latent_vector_gt)
-            losses.append(loss.item())
+            if not use_additional_losses:
+                ## output results
+                pred_latent_vector = network(input_images)
+                loss = loss_fn(pred_latent_vector, latent_vector_gt)
+                losses.append(loss.item())
+            else:
+                prediction, pred_latent_vector = network(input_images, coordinate_inputs)
 
+                if hasattr(self.config, 'sample_class') and self.config.sample_class:
+                    convex_prediction, prediction, exist, convex_layer_weights, class_prediction = (
+                        self.extract_prediction(prediction)
+                    )
+                else:
+                    class_prediction = None
+                    convex_prediction, prediction, exist, convex_layer_weights = self.extract_prediction(prediction)
+
+                ## output results
+                loss = loss_fn(pred_latent_vector, latent_vector_gt)
+                losses.append(loss.item())
+                if self.config.bsp_phase == 0 or \
+                        not (
+                                (self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True) or \
+                                self.config.decoder_type == 'MVP'):
+                    ode_loss = self.config.loss_fn(
+                        torch.clamp(prediction, min=0, max=1), 
+                        occupancy_ground_truth
+                    ) # Ussaly MSE
+                elif self.config.bsp_phase == 1:
+                    ode_loss = torch.mean((1 - occupancy_ground_truth) * (
+                            1 - torch.clamp(prediction, max=1)) + occupancy_ground_truth * torch.clamp(
+                        prediction, min=0))
+                else:
+                    raise Exception("Unknown Phase.....")
+                loss = loss + ode_loss
+                losses.append(ode_loss.detach().item())
+
+                if hasattr(self.config, 'sample_class') and self.config.sample_class and class_prediction is not None:
+                    class_loss = self.config.class_loss_fn(class_prediction, class_ground_truth.long())
+                    # (N, n_class)
+                    class_accuracy = (
+                        F.softmax(class_prediction, dim=0).argmax(dim=-1).int() == class_ground_truth
+                    ).float().mean()
+                    if avg_accuracy is None:
+                        avg_accuracy = class_accuracy
+                    else:
+                        avg_accuracy = 0.9 * class_accuracy + (1 - 0.9) * class_accuracy
+                    print_dict['recognition'] = '{:.4f}'.format(class_loss)
+                    print_dict['acc'] = '{:.2%}'.format(avg_accuracy)
+                    
+                    loss = loss + class_loss
+                    losses.append(class_loss.item())
+            
             if is_training:
                 loss.backward()
                 optimizer.step()
@@ -168,6 +222,14 @@ class ImageTrainer(object):
             tepoch.set_postfix(loss=f'{np.mean(losses)}')
 
         return losses
+
+    def extract_prediction(self, predictions_packed):
+        assert self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True
+        convex_prediction, prediction, exist, convex_layer_weights = predictions_packed[:4]
+        if hasattr(self.config, 'sample_class') and self.config.sample_class:
+            predicted_class = predictions_packed[-1] 
+            return convex_prediction, prediction, exist, convex_layer_weights, predicted_class
+        return convex_prediction, prediction, exist, convex_layer_weights
 
 
 if __name__ == '__main__':

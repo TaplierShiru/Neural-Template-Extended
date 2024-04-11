@@ -1,3 +1,16 @@
+# Allow only default configs to upload
+configs/config_continuous_*.py
+configs/config_discrete_*.py
+configs/config_image_*.py
+
+# Weights / datasets and etc
+*.zip
+pretrain/*
+data/*
+
+# Test / training stuff
+debug/
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

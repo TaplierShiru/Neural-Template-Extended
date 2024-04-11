@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 
 ## config debugger
-debug_base_folder = r'../debug'
+debug_base_folder = r'/path/to/svr_resnet34bn'
 
 #### setting for embedding
 emb_dims = 1024
@@ -13,11 +13,11 @@ output_channels = 256
 ## setting for image encoder
 img_ef_dim = 64
 # TODO: Handle parameters for new image encoder. Possibility to run old and new image-encoder
-# type_img_encoder ImageEncoder ImageEncoderOriginal
-# img_arch_type resnet18 resnet34 resnet50
-# img_final_act_func torch.sigmoid torch.tanh None
-# type_block ResNetBlockSM ResNetBlockSMBN # affect only ResNeT18 and ResNet34
-# img_linear_use_bn True False
+type_img_encoder = 'ImageEncoder' # ImageEncoder ImageEncoderOriginal
+img_arch_type = 'resnet34' # resnet18 resnet34 resnet50
+img_final_act_func = torch.sigmoid # torch.sigmoid torch.tanh None
+type_block = 'ResNetBlockSMBN' # ResNetBlockSM ResNetBlockSMBN # affect only ResNeT18 and ResNet34
+img_linear_use_bn = True # True False
 
 #### setting for decoder
 decoder_input_embbeding_size = 128
@@ -51,7 +51,7 @@ bsp_phase = 0
 bsp_thershold = 0.01
 
 #### Training
-data_worker = 0
+data_worker = 4
 coordinate_max_len = 500000
 encoder_type = 'IMAGE' # Originally here 3DCNN, but I change code to readable state, so here now Image
 decoder_type = 'Flow'
@@ -77,5 +77,5 @@ special_symbol = ''
 half_batch_size_when_phase_2 = False
 use_testing = False
 testing_interval = 1
-auto_encoder_config_path = r'<path_to_discrete_phase_folder>/config.py'
-auto_encoder_resume_path = r'<path_to_discrete_phase_folder>/<saved_model>.pth'
+auto_encoder_config_path = r'/path/to/Neural-Template/pretrain/phase_2_model/config.py'
+auto_encoder_resume_path = r'/path/to/Neural-Template/pretrain/phase_2_model/model_epoch_2_300.pth'

@@ -1,19 +1,32 @@
+import os
+import argparse
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import numpy as np
 from tqdm import tqdm
-from models.network import AutoEncoder
+import os
+
+try:
+    from models.network import AutoEncoder
+except ModuleNotFoundError:
+    # Append base path with all needed code
+    import pathlib
+    import sys
+    base_path, _ = os.path.split(pathlib.Path(__file__).parent.resolve())
+    sys.path.append(base_path)
+    # Try again
+    from models.network import AutoEncoder
+
 from data.data import ImNetSamples
 from torch.utils.data import DataLoader
 from utils.debugger import MyDebugger
-import os
-import argparse
 
 device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 # torch.backends.cudnn.benchmark = True
 
-class Trainer(object):
+class Trainer:
 
     def __init__(self, config, debugger):
         self.debugger = debugger
@@ -23,33 +36,43 @@ class Trainer(object):
 
         phases = range(self.config.starting_phase, 3) if hasattr(self.config, 'starting_phase') else [
             int(np.log2(self.config.sample_voxel_size // 16))]
+        
+        if isinstance(self.config.batch_size, list) and max(phases) >= len(self.config.batch_size):
+            raise Exception(f'Current list of batch sizes does not have value for indx (phase) {max(phases)}. ')
 
         for phase in phases:
             print(f"Start Phase {phase}")
             sample_voxel_size = 16 * (2 ** (phase))
 
+            if isinstance(self.config.batch_size, list):
+                batch_size = self.config.batch_size[phase]
+            else:
+                batch_size = self.config.batch_size 
+
             if phase == 2:
                 if not hasattr(config, 'half_batch_size_when_phase_2') or self.config.half_batch_size_when_phase_2:
-                    self.config.batch_size = self.config.batch_size // 2
+                    batch_size = batch_size // 2
                 self.config.training_epochs = self.config.training_epochs * 2
 
             ### create dataset
             train_samples = ImNetSamples(data_path=self.config.data_path,
-                                         sample_voxel_size=sample_voxel_size)
+                                         sample_voxel_size=sample_voxel_size, 
+                                         sample_class=hasattr(config, 'sample_class') and config.sample_class)
 
             train_data_loader = DataLoader(dataset=train_samples,
-                                     batch_size=self.config.batch_size,
+                                     batch_size=batch_size,
                                      num_workers=config.data_worker,
                                      shuffle=True,
                                      drop_last=False)
 
             if hasattr(self.config, 'use_testing') and self.config.use_testing:
-                test_samples = ImNetSamples(data_path=self.config.data_path[:-10] + 'test.hdf5',
+                test_samples = ImNetSamples(data_path=self.config.data_test_path,
                                             sample_voxel_size=sample_voxel_size,
-                                            interval=self.config.testing_interval)
+                                            interval=self.config.testing_interval, 
+                                            sample_class=hasattr(config, 'sample_class') and config.sample_class)
 
                 test_data_loader = DataLoader(dataset=test_samples,
-                                               batch_size=self.config.batch_size,
+                                               batch_size=batch_size,
                                                num_workers=config.data_worker,
                                                shuffle=True,
                                                drop_last=False)
@@ -67,12 +90,10 @@ class Trainer(object):
             ## reload the network if needed
             if self.config.network_resume_path is not None:
                 network_state_dict = torch.load(self.config.network_resume_path)
-                network_state_dict = Trainer.process_state_dict(network_state_dict)
+                network_state_dict = AutoEncoder.process_state_dict(network_state_dict)
                 network.load_state_dict(network_state_dict)
-                network.train()
                 print(f"Reloaded the network from {self.config.network_resume_path}")
                 self.config.network_resume_path = None
-
             optimizer = torch.optim.Adam(params=network.parameters(), lr=self.config.lr,
                                          betas=(self.config.beta1, 0.999))
             if self.config.optimizer_resume_path is not None:
@@ -84,8 +105,7 @@ class Trainer(object):
             for idx in range(self.config.starting_epoch, self.config.training_epochs + 1):
                 with tqdm(train_data_loader, unit='batch') as tepoch:
                     tepoch.set_description(f'Epoch {idx}')
-                    losses = []
-                    losses = self.evaluate_one_epoch(losses, network, optimizer, tepoch, is_training = True)
+                    losses = self.evaluate_one_epoch(network, optimizer, tepoch, is_training = True)
 
                     print(f"Test Loss for epoch {idx} : {np.mean(losses)}")
 
@@ -103,38 +123,76 @@ class Trainer(object):
 
                         if hasattr(self.config, 'use_testing') and self.config.use_testing:
                             with tqdm(test_data_loader, unit='batch') as tepoch:
-                                losses = []
-                                losses = self.evaluate_one_epoch(losses, network, optimizer = None, tepoch = tepoch, is_training=False)
-                                print(f"Test Loss for epoch {idx} : {np.mean(losses)}")
+                                losses, avg_accuracy = self.evaluate_one_epoch(
+                                    network, optimizer = None, 
+                                    tepoch = tepoch, is_training=False,
+                                    return_avg_accuracy=True
+                                )
+                                final_print = 'Test epoch {} | Loss : {:.4f} '.format(idx, np.mean(losses))
+                                if hasattr(self.config, 'sample_class') and self.config.sample_class and avg_accuracy is not None:
+                                    final_print += '; avg accuracy : {:.2%}'.format(avg_accuracy)
+                                print(final_print)
+                                
 
             ## when done the phase
             self.config.starting_epoch = 0
 
-    def evaluate_one_epoch(self, losses, network, optimizer, tepoch, is_training = True):
+    def evaluate_one_epoch(self, network, optimizer, tepoch, is_training = True, return_avg_accuracy=False):
+        if is_training:
+            network.train()
+            return self._evaluate_loop(
+                network, optimizer, 
+                tepoch, is_training=is_training, 
+                return_avg_accuracy=return_avg_accuracy
+            )
+
+        network.eval()
+        with torch.no_grad():
+            return self._evaluate_loop(
+                network, optimizer, 
+                tepoch, is_training=is_training, 
+                return_avg_accuracy=return_avg_accuracy
+            )
+
+    def _evaluate_loop(self, network, optimizer, tepoch, is_training = True, return_avg_accuracy=False):
+        losses = []
         ## main training loop
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
+        avg_accuracy = None
 
         for inputs, samples_indices in tepoch:
-
+            print_dict = {}
             ## get voxel_inputs
-            voxels_inputs, coordinate_inputs, occupancy_ground_truth = inputs
+            if hasattr(self.config, 'sample_class') and self.config.sample_class:
+                voxels_inputs, coordinate_inputs, occupancy_ground_truth, class_ground_truth = inputs
+                class_ground_truth = class_ground_truth.to(device)
+            else:
+                voxels_inputs, coordinate_inputs, occupancy_ground_truth = inputs
+            # TODO: Is it used for Normal Consistency metric here?
             normals_gt = None
 
             ## remove gradient
             if is_training:
                 optimizer.zero_grad()
+                network.zero_grad()
 
             voxels_inputs, coordinate_inputs, occupancy_ground_truth, samples_indices = voxels_inputs.to(
                 device), coordinate_inputs.to(device), occupancy_ground_truth.to(
                 device), samples_indices.to(device)
 
             if self.config.network_type == 'AutoEncoder':
-                prediction = network(voxels_inputs, coordinate_inputs)
+                prediction, _ = network(voxels_inputs, coordinate_inputs)
             else:
                 raise Exception("Unknown Network Type....")
 
-            convex_prediction, prediction, exist, convex_layer_weights = self.extract_prediction(prediction)
+            if hasattr(self.config, 'sample_class') and self.config.sample_class:
+                convex_prediction, prediction, exist, convex_layer_weights, class_prediction = (
+                    self.extract_prediction(prediction)
+                )
+            else:
+                class_prediction = None
+                convex_prediction, prediction, exist, convex_layer_weights = self.extract_prediction(prediction)
 
             loss = self.config.loss_fn(torch.clamp(prediction, min=0, max=1), occupancy_ground_truth)
 
@@ -146,14 +204,30 @@ class Trainer(object):
             else:
                 raise Exception("Unknown Network Type....")
 
+            if hasattr(self.config, 'sample_class') and self.config.sample_class and class_prediction is not None:
+                class_loss = self.config.class_loss_fn(class_prediction, class_ground_truth.long())
+                # (N, n_class)
+                class_accuracy = (
+                    F.softmax(class_prediction, dim=0).argmax(dim=-1).int() == class_ground_truth
+                ).float().mean()
+                if avg_accuracy is None:
+                    avg_accuracy = class_accuracy
+                else:
+                    avg_accuracy = 0.9 * class_accuracy + (1 - 0.9) * class_accuracy
+                print_dict['recognition'] = '{:.4f}'.format(class_loss)
+                print_dict['acc'] = '{:.2%}'.format(avg_accuracy)
+                
+                loss = loss + class_loss
+
             if is_training:
                 loss.backward()
                 optimizer.step()
 
-            tepoch.set_postfix(loss=f'{np.mean(losses)}')
-
+            print_dict['loss'] = '{:.4f}'.format(np.mean(losses))
+            tepoch.set_postfix(**print_dict)
+        if return_avg_accuracy:
+            return losses, avg_accuracy
         return losses
-
 
     def flow_bsp_loss(self, loss, losses, network, occupancy_ground_truth, prediction, convex_layer_weights):
 
@@ -182,30 +256,13 @@ class Trainer(object):
         return loss, losses
 
 
-    def extract_prediction(self, prediction):
-
+    def extract_prediction(self, predictions_packed):
         assert self.config.decoder_type == 'Flow' and self.config.flow_use_bsp_field == True
-        convex_prediction, prediction, exist, convex_layer_weights = prediction  # unpack the idead
-
+        convex_prediction, prediction, exist, convex_layer_weights = predictions_packed[:4]
+        if hasattr(self.config, 'sample_class') and self.config.sample_class:
+            predicted_class = predictions_packed[-1] 
+            return convex_prediction, prediction, exist, convex_layer_weights, predicted_class
         return convex_prediction, prediction, exist, convex_layer_weights
-
-    @staticmethod
-    def process_state_dict(network_state_dict, type = 0):
-
-        if torch.cuda.device_count() >= 2 and type == 0:
-            for key, item in list(network_state_dict.items()):
-                if key[:7] != 'module.':
-                    new_key = 'module.' + key
-                    network_state_dict[new_key] = item
-                    del network_state_dict[key]
-        else:
-            for key, item in list(network_state_dict.items()):
-                if key[:7] == 'module.':
-                    new_key = key[7:]
-                    network_state_dict[new_key] = item
-                    del network_state_dict[key]
-
-        return network_state_dict
 
 
 if __name__ == '__main__':
@@ -241,6 +298,11 @@ if __name__ == '__main__':
 
 
     model_type = f"AutoEncoder-{config.encoder_type}-{config.decoder_type}" if config.network_type == 'AutoEncoder' else f"AutoDecoder-{config.decoder_type}"
-    debugger = MyDebugger(f'IM-Net-Training-experiment-{os.path.basename(config.data_folder)}-{model_type}{config.special_symbol}', is_save_print_to_file = True, config_path = resume_path)
+    debugger = MyDebugger(
+        f'IM-Net-Training-experiment-{os.path.basename(config.data_folder)}-{model_type}{config.special_symbol}', 
+        is_save_print_to_file = True, 
+        config_path = resume_path,
+        config=config
+    )
     trainer = Trainer(config = config, debugger = debugger)
     trainer.train_network()

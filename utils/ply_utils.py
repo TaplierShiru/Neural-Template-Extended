@@ -1,5 +1,34 @@
+from typing import List
 import numpy as np
 EPS = 1e-4
+
+
+def read_ply_point(shape_name):
+    file = open(shape_name,'r')
+    lines = file.readlines()
+
+    start = 0
+    while True:
+        line = lines[start].strip()
+        if line == "end_header":
+            start += 1
+            break
+        line = line.split()
+        if line[0] == "element":
+            if line[1] == "vertex":
+                vertex_num = int(line[2])
+        start += 1
+    # (N, 3)
+    vertices = np.array(
+        list(map(
+            lambda x: list(map(float, x.split())), 
+            lines[start:vertex_num]
+        )), 
+        dtype=np.float32
+    )
+    return vertices
+
+
 def read_ply_point_normal(shape_name):
     file = open(shape_name,'r')
     lines = file.readlines()
@@ -15,17 +44,15 @@ def read_ply_point_normal(shape_name):
             if line[1] == "vertex":
                 vertex_num = int(line[2])
         start += 1
-
-    vertices = np.zeros([vertex_num,3], np.float32)
-    normals = np.zeros([vertex_num,3], np.float32)
-    for i in range(vertex_num):
-        line = lines[i+start].split()
-        vertices[i,0] = float(line[0]) #X
-        vertices[i,1] = float(line[1]) #Y
-        vertices[i,2] = float(line[2]) #Z
-        normals[i,0] = float(line[3]) #normalX
-        normals[i,1] = float(line[4]) #normalY
-        normals[i,2] = float(line[5]) #normalZ
+    # (N, 6)
+    vertices_and_normals = np.array(
+        list(map(
+            lambda x: list(map(float, x.split())), 
+            lines[start:vertex_num]
+        )), 
+        dtype=np.float32
+    )
+    vertices, normals = vertices_and_normals[:, :3], vertices_and_normals[:, 3:]
     return vertices, normals
 
 

@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
+
 class BSPDecoder(torch.nn.Module):
 
     def __init__(self, config):
@@ -33,7 +33,7 @@ class BSPDecoder(torch.nn.Module):
         plane_m = self.plane_encoder(embedding[:, :self.config.decoder_input_embbeding_size])
 
         ## cat
-        ones = torch.ones(x.size(0), x.size(1), 1).to(device)
+        ones = torch.ones(x.size(0), x.size(1), 1).to(embedding.device)
         x = torch.cat((x, ones), dim = 2)
         if not hasattr(self.config, 'bsp_phase') or self.config.bsp_phase == 0:
             ## phase 0
