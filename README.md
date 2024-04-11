@@ -7,7 +7,8 @@
 - Additional module - **Recognition module**. Mainly for classification task. **Encoder** give latent space vector which should be classified via **Recognition network** (which for now simple several MLPs);
 - In some areas/cases clean code to better understand how this system works;
 - Evaluation code to calculate: Chamfer distance (CD), Normal Consistency (NC), Point-to-surface distance (P2F) and Light field distance (LFD). Currently in development, will be added later.
-- SOON...
+- Examples could be found in `examples` folder with different examples of how run model.
+- Weights of different model for notebooks in `examples` could be found [here](https://drive.google.com/drive/folders/1yKiK6nrX88UVsWSTFqLczdPSRcb1AWcX?usp=sharing).
 
 # Environments
 You can create and activate a conda environment for this project using the following commands:

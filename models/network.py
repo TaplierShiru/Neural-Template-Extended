@@ -189,6 +189,10 @@ class AutoEncoder(nn.Module):
         vertices, polygons, vertices_convex, polygons_convex = get_mesh_watertight(bsp_convex_list)
 
         vertices = np.array(vertices)
+        # TODO: Optional operation `triangulate_mesh_with_subdivide`, see note below
+        # Subidivde produce huge number of additional vertices, 
+        # but I test that if we remove it, final mesh stil will be allright
+        # So, as future improve feature, this step could be ignored\skipped to get more compact final mesh
         vertices, polygons = triangulate_mesh_with_subdivide(vertices, polygons)
 
         vertices_result = self.deform_vertices(embedding_1, max_batch, vertices)
